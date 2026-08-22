@@ -57,7 +57,17 @@
     "acknowledged_cross_family": []
   },
 
+  "_routes_comment": "One rule per route in .claude/planning/asset-destination-table.json, most literal first: the resolver prefers the template that pins down more segments, so a route naming Buildings/Kits beats the generic library route without ambiguity. Each route comes in two shapes - with a canonical type folder and without - because a family may hold its assets flat or split them by type (owner, 2026-08-17). The typed shape is listed first so PlaceAsset answers with it; the flat shape stays for reading paths that already exist. A type folder is only ever one of the names in kind_directories: anything else is pack residue and must stay unmatched so the audit can see it.",
   "rules": [
+    { "context": "building-kit",   "folder": "Assets/{geography}/Buildings/Kits/{family}/{kind_dir}", "requires": ["geography", "family"] },
+    { "context": "building-kit",   "folder": "Assets/{geography}/Buildings/Kits/{family}",            "requires": ["geography", "family"] },
+    { "context": "reusable-prop",  "folder": "Assets/{geography}/Props/{category}/{family}/{kind_dir}", "requires": ["geography", "category", "family"] },
+    { "context": "reusable-prop",  "folder": "Assets/{geography}/Props/{category}/{family}",            "requires": ["geography", "category", "family"] },
+    { "context": "vehicle",        "folder": "Assets/{geography}/Vehicles/{category}/{family}/{kind_dir}", "requires": ["geography", "category", "family"] },
+    { "context": "vehicle",        "folder": "Assets/{geography}/Vehicles/{category}/{family}",            "requires": ["geography", "category", "family"] },
+    { "context": "foliage",        "folder": "Assets/{geography}/Foliage/{family}/{kind_dir}",         "requires": ["geography", "family"] },
+    { "context": "foliage",        "folder": "Assets/{geography}/Foliage/{family}",                    "requires": ["geography", "family"] },
+    { "context": "library",        "folder": "Assets/{geography}/{category}/{family}/{kind_dir}", "requires": ["geography", "category", "family"] },
     { "context": "library",        "folder": "Assets/{geography}/{category}/{family}", "requires": ["geography", "category", "family"] },
     { "context": "shared",         "folder": "Assets/Shared/{kind_dir}/{category}",    "requires": ["category"] },
     { "context": "framework",      "folder": "Core/{area}",                            "requires": ["area"] },
