@@ -1,0 +1,80 @@
+{
+  "_comment": "OWH taxonomy (D-014 plus .claude/planning/asset-storage-policy.md). Reusable art is placed by semantic geography and category before the owning family; level placement never owns a reusable asset.",
+  "schema_version": 1,
+  "content_root": "/Game",
+
+  "prefixes": {
+    "SM": "mesh", "SK": "mesh",
+    "M": "material", "MI": "material", "MF": "material",
+    "T": "texture",
+    "NS": "fx", "NE": "fx",
+    "S": "audio", "SC": "audio",
+    "ABP": "anim", "AS": "anim", "BS": "anim", "AM": "anim",
+    "BP": "blueprint", "WBP": "widget",
+    "DA": "data", "DT": "data",
+    "IA": "input", "IMC": "input",
+    "LS": "cinematic",
+    "PHYS": "physics"
+  },
+
+  "kind_directories": {
+    "mesh": "Meshes",
+    "material": "Materials",
+    "texture": "Textures",
+    "fx": "FX",
+    "audio": "Audio",
+    "anim": "Animations"
+  },
+
+  "unprefixed_contexts": ["map", "map-test"],
+
+  "lint": {
+    "shared_folder": "Assets/Shared",
+    "family_root": "Assets",
+    "_family_patterns_comment": "One entry per route in the destination table, most specific first. The table mixes depths on purpose: a building kit is one ownership family behind Buildings/Kits, while an environment pack owns its family directly under the category.",
+    "family_patterns": [
+      "*/Buildings/Kits/*",
+      "*/Buildings/Parts/*",
+      "*/Buildings/*",
+      "*/Props/*/*",
+      "*/Vehicles/*/*",
+      "*/Environment/*",
+      "*/Foliage/*",
+      "*/Surfaces/*",
+      "*/Landscape/*",
+      "*/Materials/*"
+    ],
+    "_assembly_patterns_comment": "A building kit exists to be assembled from parts, so its outgoing family references are the artifact working, not decay. Measured 2026-08-15: 164 of the 177 edges into Buildings/Parts came from one kit, which is why Parts is not a shared library and the kit is not an offender. The direction that does cost something - reaching into a kit's internals - is reported as depends-on-assembly.",
+    "assembly_patterns": [
+      "*/Buildings/Kits/*"
+    ],
+    "forbidden_folder_prefixes": ["_"],
+    "_rule_severity_comment": "Shared reaching into a private family is the rule that makes Shared meaningless, so it stays an error. Family-to-family is a warning with a register: the migrated library already carries such edges by construction, and turning them into a hard stop would only get the lint disabled.",
+    "rule_severity": {
+      "family-depends-on-family": "warning",
+      "depends-on-assembly": "warning"
+    },
+    "acknowledged_cross_family": []
+  },
+
+  "rules": [
+    { "context": "library",        "folder": "Assets/{geography}/{category}/{family}", "requires": ["geography", "category", "family"] },
+    { "context": "shared",         "folder": "Assets/Shared/{kind_dir}/{category}",    "requires": ["category"] },
+    { "context": "framework",      "folder": "Core/{area}",                            "requires": ["area"] },
+    { "context": "ui-widget",      "folder": "UI/Widgets" },
+    { "context": "ui-style",       "folder": "UI/Styles" },
+    { "context": "ui-texture",     "folder": "UI/Textures" },
+    { "context": "ui-common",      "folder": "UI/Common" },
+    { "context": "gameplay-object","folder": "Gameplay/Interactives" },
+    { "context": "gameplay-trigger","folder": "Gameplay/Triggers" },
+    { "context": "character",      "folder": "Characters/{entity}",                    "requires": ["entity"] },
+    { "context": "enemy",          "folder": "Characters/Enemies/{family}",            "requires": ["family"] },
+    { "context": "boss",           "folder": "Characters/Bosses/{entity}",             "requires": ["entity"] },
+    { "context": "animation",      "folder": "Animations/{category}",                  "requires": ["category"] },
+    { "context": "cinematic",      "folder": "Cinematics/{category}",                  "requires": ["category"] },
+    { "context": "vfx",            "folder": "VFX/{category}",                         "requires": ["category"] },
+    { "context": "audio",          "folder": "Audio/{category}",                       "requires": ["category"] },
+    { "context": "map",            "folder": "Maps" },
+    { "context": "map-test",       "folder": "Maps/Test" }
+  ]
+}

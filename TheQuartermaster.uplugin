@@ -1,0 +1,38 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "The Quartermaster",
+	"Description": "Editor-only onboarding toolkit for taking over a neglected project: hold the inventory, store what is out of use, and issue everything to its proper place. Quarantine a pack folder without an engine rename, restore it by its origin marker, or delete it.",
+	"Category": "The",
+	"CreatedBy": "Kentron Cowboys",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"EnabledByDefault": true,
+	"Modules": [
+		{
+			"Name": "TheQuartermaster",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "TheQuartermasterToolset",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit",
+			"TargetAllowList": [ "Editor" ]
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "ToolsetRegistry",
+			"Enabled": true,
+			"Optional": true
+		}
+	]
+}

@@ -1,0 +1,62 @@
+{
+  "_comment": "TheGame taxonomy (its .claude/docs/asset_structure.md). Kept alongside the OWH config as the portability test: if one schema cannot express both without a special case in code, the schema is wrong. Note the shapes that differ - object families with no geography level, a named Chapters root, a singular Hero, and four map subfolders instead of one.",
+  "schema_version": 1,
+  "content_root": "/Game",
+
+  "prefixes": {
+    "BP": "blueprint", "WBP": "widget",
+    "ABP": "anim", "AS": "anim", "MM": "anim", "BS": "anim", "AO": "anim", "CR": "anim",
+    "M": "material", "MI": "material", "MF": "material", "TP": "material",
+    "T": "texture",
+    "SM": "mesh", "SK": "mesh",
+    "PHYS": "physics",
+    "NS": "fx", "NE": "fx",
+    "S": "audio", "SC": "audio", "SCL": "audio-routing", "SMix": "audio-routing",
+    "DA": "data", "DT": "data", "CT": "data",
+    "IA": "input", "MC": "input", "CIBCD": "input",
+    "GE": "ability", "GA": "ability", "GC": "ability",
+    "DLG": "narrative", "PER": "narrative", "QST": "narrative"
+  },
+
+  "kind_directories": {
+    "mesh": "Meshes",
+    "material": "Materials",
+    "texture": "Textures",
+    "fx": "FX",
+    "audio": "Audio",
+    "anim": "Animations"
+  },
+
+  "unprefixed_contexts": ["map", "map-test", "map-qa", "map-template"],
+
+  "lint": {
+    "shared_folder": "Assets/Shared",
+    "family_root": "Assets",
+    "_family_patterns_comment": "A flat library is the one-pattern case: the family is the single segment below Assets. Same schema as OWH's mixed-depth table, no special case in code.",
+    "family_patterns": ["*"],
+    "forbidden_folder_prefixes": ["_"],
+    "rule_severity": {},
+    "acknowledged_cross_family": []
+  },
+
+  "rules": [
+    { "context": "library",          "folder": "Assets/{family}",              "requires": ["family"] },
+    { "context": "shared",           "folder": "Assets/Shared/{kind_dir}" },
+    { "context": "framework",        "folder": "Core" },
+    { "context": "hero",             "folder": "Characters/Hero" },
+    { "context": "cast",             "folder": "Characters/Cast/{entity}",     "requires": ["entity"] },
+    { "context": "enemy",            "folder": "Characters/Enemies/{entity}",  "requires": ["entity"] },
+    { "context": "character-common", "folder": "Characters/Common" },
+    { "context": "chapter",          "folder": "Chapters/{chapter}",           "requires": ["chapter"] },
+    { "context": "gameplay-object",  "folder": "Gameplay/{category}",          "requires": ["category"] },
+    { "context": "ability",          "folder": "Gameplay/Abilities/{owner}",   "requires": ["owner"] },
+    { "context": "ui-component",     "folder": "UI/Common" },
+    { "context": "ui-screen",        "folder": "UI/Widgets" },
+    { "context": "ui-style",         "folder": "UI/Styles" },
+    { "context": "ui-resource",      "folder": "UI/Textures" },
+    { "context": "map",              "folder": "Maps" },
+    { "context": "map-test",         "folder": "Maps/Tests" },
+    { "context": "map-qa",           "folder": "Maps/QA" },
+    { "context": "map-template",     "folder": "Maps/Templates" }
+  ]
+}
