@@ -32,8 +32,6 @@ bool FThePlacementBothTaxonomiesTest::RunTest(const FString& Parameters)
 {
     using namespace TheQuartermasterPlacementTests;
 
-    // The point of the whole module: if one schema cannot carry two real projects' structures
-    // without a special case in code, the schema is wrong and the tool is not portable.
     FThePlacementResolver Owh;
     FString Error;
     if(!TestTrue(FString::Printf(TEXT("OWH config loads: %s"), *Error), Owh.LoadConfig(ConfigPath(TEXT("placement.owh.json")), Error)))
@@ -41,42 +39,125 @@ bool FThePlacementBothTaxonomiesTest::RunTest(const FString& Parameters)
         return false;
     }
 
-    FThePlacementResolver TheGame;
-    if(!TestTrue(FString::Printf(TEXT("TheGame config loads: %s"), *Error), TheGame.LoadConfig(ConfigPath(TEXT("placement.thegame.json")), Error)))
+    FThePlacementResolver Forms;
+    if(!TestTrue(FString::Printf(TEXT("the forms fixture loads: %s"), *Error), Forms.LoadConfig(ConfigPath(TEXT("placement.forms.json")), Error)))
     {
         return false;
     }
 
-    // OWH places reusable art by geography, then category, then family.
     const FThePlacementResult OwhLibrary = Owh.Resolve(Facts(TEXT("SM_Tower01"), TEXT("library"),
         {{TEXT("geography"), TEXT("City")}, {TEXT("category"), TEXT("Buildings")}, {TEXT("family"), TEXT("Tower01")}}));
-    TestEqual(TEXT("OWH library placement"), OwhLibrary.PackagePath, FString(TEXT("/Game/Assets/City/Buildings/Tower01/SM_Tower01")));
+    TestEqual(TEXT("OWH library placement"), OwhLibrary.PackagePath, FString(TEXT("/Game/Assets/City/Buildings/Tower01/Meshes/SM_Tower01")));
 
-    // TheGame has no geography level at all - one family folder per object.
-    const FThePlacementResult GameLibrary = TheGame.Resolve(Facts(TEXT("SM_Tower01"), TEXT("library"),
-        {{TEXT("family"), TEXT("Tower01")}}));
-    TestEqual(TEXT("TheGame library placement"), GameLibrary.PackagePath, FString(TEXT("/Game/Assets/Tower01/SM_Tower01")));
+    const FThePlacementResult Flat = Forms.Resolve(Facts(TEXT("SM_Tower01"), TEXT("library"),
+        {{TEXT("category"), TEXT("Town")}, {TEXT("entity"), TEXT("Tower01")}}));
+    TestEqual(TEXT("a section of one segment"), Flat.PackagePath, FString(TEXT("/Game/Assets/Town/Tower01/SM_Tower01")));
 
-    // Shared resolves through the resource kind of the prefix, in both.
+    const FThePlacementResult Deep = Forms.Resolve(Facts(TEXT("SM_Cliff01"), TEXT("library"),
+        {{TEXT("category"), TEXT("Nature/Rocks")}, {TEXT("entity"), TEXT("Cliff01")}}));
+    TestEqual(TEXT("a section of two segments"), Deep.PackagePath, FString(TEXT("/Game/Assets/Nature/Rocks/Cliff01/SM_Cliff01")));
+
     const FThePlacementResult OwhShared = Owh.Resolve(Facts(TEXT("T_Noise"), TEXT("shared"), {{TEXT("category"), TEXT("Utility")}}));
     TestEqual(TEXT("OWH shared placement"), OwhShared.PackagePath, FString(TEXT("/Game/Assets/Shared/Textures/Utility/T_Noise")));
 
-    const FThePlacementResult GameShared = TheGame.Resolve(Facts(TEXT("T_Noise"), TEXT("shared")));
-    TestEqual(TEXT("TheGame shared placement"), GameShared.PackagePath, FString(TEXT("/Game/Assets/Shared/Textures/T_Noise")));
+    const FThePlacementResult BareShared = Forms.Resolve(Facts(TEXT("T_Noise"), TEXT("shared")));
+    TestEqual(TEXT("an optional level disappears when unnamed"), BareShared.PackagePath, FString(TEXT("/Game/Assets/Shared/Textures/T_Noise")));
 
-    // A singular Hero in one project, a named character folder in the other.
-    const FThePlacementResult GameHero = TheGame.Resolve(Facts(TEXT("BP_Hero"), TEXT("hero")));
-    TestEqual(TEXT("TheGame hero placement"), GameHero.PackagePath, FString(TEXT("/Game/Characters/Hero/BP_Hero")));
-
-    const FThePlacementResult OwhCharacter = Owh.Resolve(Facts(TEXT("BP_Jimmy"), TEXT("character"), {{TEXT("entity"), TEXT("Jimmy")}}));
-    TestEqual(TEXT("OWH character placement"), OwhCharacter.PackagePath, FString(TEXT("/Game/Characters/Jimmy/BP_Jimmy")));
-
-    // A root that exists in one taxonomy and not the other is just a rule, not a code path.
-    const FThePlacementResult Chapter = TheGame.Resolve(Facts(TEXT("QST_FindTheDog"), TEXT("chapter"), {{TEXT("chapter"), TEXT("Ch01")}}));
-    TestEqual(TEXT("TheGame chapter placement"), Chapter.PackagePath, FString(TEXT("/Game/Chapters/Ch01/QST_FindTheDog")));
-
-    const FThePlacementResult OwhChapter = Owh.Resolve(Facts(TEXT("QST_FindTheDog"), TEXT("chapter"), {{TEXT("chapter"), TEXT("Ch01")}}));
+    const FThePlacementResult OwhChapter = Owh.Resolve(Facts(TEXT("QST_FindTheDog"), TEXT("chapter"), {{TEXT("chapter"), TEXT("Ch01_Yard")}}));
     TestEqual(TEXT("OWH has no chapter context"), OwhChapter.Outcome, EThePlacementOutcome::Rejected);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThePlacementFiveFormsTest, "TheQuartermaster.Placement.ExpressesEveryFormItClaims", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThePlacementFiveFormsTest::RunTest(const FString& Parameters)
+{
+    using namespace TheQuartermasterPlacementTests;
+
+    FThePlacementResolver Resolver;
+    FString Error;
+    if(!TestTrue(FString::Printf(TEXT("the forms fixture loads: %s"), *Error), Resolver.LoadConfig(ConfigPath(TEXT("placement.forms.json")), Error)))
+    {
+        return false;
+    }
+
+    const FThePlacementResult Rig = Resolver.Resolve(Facts(TEXT("SK_Jimmy"), TEXT("character"), {{TEXT("entity"), TEXT("Jimmy")}}));
+    TestEqual(TEXT("the rig sits at the character root"), Rig.PackagePath, FString(TEXT("/Game/Characters/Jimmy/SK_Jimmy")));
+    const FThePlacementResult Skin = Resolver.Resolve(Facts(TEXT("MI_Jimmy_Skin"), TEXT("character"), {{TEXT("entity"), TEXT("Jimmy")}}));
+    TestEqual(TEXT("its material goes one level down"), Skin.PackagePath, FString(TEXT("/Game/Characters/Jimmy/Materials/MI_Jimmy_Skin")));
+
+    const FThePlacementResult Water = Resolver.Resolve(Facts(TEXT("M_Water"), TEXT("surface"), {{TEXT("category"), TEXT("Water")}}));
+    TestEqual(TEXT("a declared value places"), Water.PackagePath, FString(TEXT("/Game/Assets/Shared/Materials/Water/M_Water")));
+    const FThePlacementResult Sky = Resolver.Resolve(Facts(TEXT("M_Sky"), TEXT("surface"), {{TEXT("category"), TEXT("Sky")}}));
+    TestEqual(TEXT("a value outside the closed list is refused"), Sky.Outcome, EThePlacementOutcome::Rejected);
+    TestTrue(TEXT("the refusal names the closed list"), Sky.Error.Contains(TEXT("Water")));
+
+    const FThePlacementResult Dialogue = Resolver.Resolve(Facts(TEXT("DLG_Intro"), TEXT("chapter"), {{TEXT("chapter"), TEXT("Ch01_Yard")}}));
+    TestEqual(TEXT("a dialogue sorts into its own subfolder"), Dialogue.PackagePath, FString(TEXT("/Game/Narrative/Chapters/Ch01_Yard/Dialogues/DLG_Intro")));
+    const FThePlacementResult Art = Resolver.Resolve(Facts(TEXT("SM_Shrine"), TEXT("chapter"), {{TEXT("chapter"), TEXT("Ch01_Yard")}}));
+    TestEqual(TEXT("anything else falls to the default subfolder"), Art.PackagePath, FString(TEXT("/Game/Narrative/Chapters/Ch01_Yard/Assets/SM_Shrine")));
+    const FThePlacementResult Malformed = Resolver.Resolve(Facts(TEXT("DLG_Intro"), TEXT("chapter"), {{TEXT("chapter"), TEXT("Yard")}}));
+    TestEqual(TEXT("a fact off its declared shape is refused"), Malformed.Outcome, EThePlacementOutcome::Rejected);
+
+    const FThePlacementResult SharedAsSection = Resolver.Resolve(Facts(TEXT("SM_Part"), TEXT("library"),
+        {{TEXT("category"), TEXT("Shared")}, {TEXT("entity"), TEXT("Parts")}}));
+    TestEqual(TEXT("a refused value does not place"), SharedAsSection.Outcome, EThePlacementOutcome::Rejected);
+    TestTrue(TEXT("the refusal carries its reason"), SharedAsSection.Error.Contains(TEXT("not a section")));
+    const FThePlacementResult Any = Resolver.Resolve(Facts(TEXT("M_Generic"), TEXT("surface"), {{TEXT("category"), TEXT("Any")}}));
+    TestEqual(TEXT("a value naming the absence of a level collapses it"), Any.PackagePath, FString(TEXT("/Game/Assets/Shared/Materials/M_Generic")));
+    const FThePlacementResult PrefixedMap = Resolver.Resolve(Facts(TEXT("L_Demo"), TEXT("map")));
+    TestEqual(TEXT("a refused name does not place"), PrefixedMap.Outcome, EThePlacementOutcome::Rejected);
+    const FThePlacementResult BareMap = Resolver.Resolve(Facts(TEXT("Demo"), TEXT("map")));
+    TestEqual(TEXT("the same context takes the name without it"), BareMap.PackagePath, FString(TEXT("/Game/Maps/Demo")));
+
+    const FThePlacementResult PersonaAsCharacter = Resolver.Resolve(Facts(TEXT("PER_Jimmy"), TEXT("character"), {{TEXT("entity"), TEXT("Jimmy")}}));
+    TestEqual(TEXT("a redirected prefix does not place in the context offered"), PersonaAsCharacter.Outcome, EThePlacementOutcome::Rejected);
+    TestTrue(TEXT("the refusal names where it belongs"), PersonaAsCharacter.Error.Contains(TEXT("persona")));
+    const FThePlacementResult Persona = Resolver.Resolve(Facts(TEXT("PER_Jimmy"), TEXT("persona")));
+    TestEqual(TEXT("and it places in the context it was sent to"), Persona.PackagePath, FString(TEXT("/Game/Narrative/Personas/PER_Jimmy")));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThePlacementPlaceExplainRoundTripTest, "TheQuartermaster.Placement.ExplainsWhatItPlaces", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThePlacementPlaceExplainRoundTripTest::RunTest(const FString& Parameters)
+{
+    using namespace TheQuartermasterPlacementTests;
+
+    FThePlacementResolver Resolver;
+    FString Error;
+    if(!TestTrue(FString::Printf(TEXT("the forms fixture loads: %s"), *Error), Resolver.LoadConfig(ConfigPath(TEXT("placement.forms.json")), Error)))
+    {
+        return false;
+    }
+
+    const TArray<TPair<FString, FThePlacementFacts>> Cases = {
+        {TEXT("the rig at a character root"), Facts(TEXT("SK_Jimmy"), TEXT("character"), {{TEXT("entity"), TEXT("Jimmy")}})},
+        {TEXT("art under its kind subfolder"), Facts(TEXT("MI_Jimmy_Skin"), TEXT("character"), {{TEXT("entity"), TEXT("Jimmy")}})},
+        {TEXT("a section of one segment"), Facts(TEXT("SM_Tower01"), TEXT("library"), {{TEXT("category"), TEXT("Town")}, {TEXT("entity"), TEXT("Tower01")}})},
+        {TEXT("a section of two segments"), Facts(TEXT("SM_Cliff01"), TEXT("library"), {{TEXT("category"), TEXT("Nature/Rocks")}, {TEXT("entity"), TEXT("Cliff01")}})},
+        {TEXT("a collapsed level"), Facts(TEXT("M_Generic"), TEXT("surface"), {{TEXT("category"), TEXT("Any")}})},
+        {TEXT("an absent optional level"), Facts(TEXT("T_Noise"), TEXT("shared"))},
+        {TEXT("a sub resolved by prefix"), Facts(TEXT("DLG_Intro"), TEXT("chapter"), {{TEXT("chapter"), TEXT("Ch01_Yard")}})},
+        {TEXT("a redirect destination"), Facts(TEXT("PER_Jimmy"), TEXT("persona"))},
+        {TEXT("an unprefixed context"), Facts(TEXT("Demo"), TEXT("map"))},
+    };
+
+    for(const TPair<FString, FThePlacementFacts>& Case : Cases)
+    {
+        const FThePlacementResult Placed = Resolver.Resolve(Case.Value);
+        if(!TestEqual(FString::Printf(TEXT("%s places"), *Case.Key), Placed.Outcome, EThePlacementOutcome::Placed))
+        {
+            continue;
+        }
+        const FThePathExplanation Back = Resolver.Explain(Placed.PackagePath);
+        TestEqual(FString::Printf(TEXT("%s is explained by the context that placed it"), *Case.Key), Back.Context, Case.Value.Context);
+    }
+
+    const FThePathExplanation Stray = Resolver.Explain(TEXT("/Game/Characters/Jimmy/Rigs/SK_Jimmy"));
+    TestEqual(TEXT("a level no rule describes is unmatched"), Stray.Outcome, ETheExplanationOutcome::Unmatched);
+    const FThePathExplanation RefusedName = Resolver.Explain(TEXT("/Game/Maps/L_Demo"));
+    TestEqual(TEXT("a name the context refuses is unmatched"), RefusedName.Outcome, ETheExplanationOutcome::Unmatched);
+    const FThePathExplanation Redirected = Resolver.Explain(TEXT("/Game/Characters/Jimmy/PER_Jimmy"));
+    TestEqual(TEXT("a redirected prefix is unmatched where it does not belong"), Redirected.Outcome, ETheExplanationOutcome::Unmatched);
     return true;
 }
 
@@ -92,8 +173,6 @@ bool FThePlacementRefusalTest::RunTest(const FString& Parameters)
         return false;
     }
 
-    // An unknown prefix is a naming-table violation. Placing it anyway would launder the violation
-    // into the structure, which is the failure mode this whole tool exists to prevent.
     const FThePlacementResult Unknown = Resolver.Resolve(Facts(TEXT("XYZ_Thing"), TEXT("ui-widget")));
     TestEqual(TEXT("unknown prefix is rejected"), Unknown.Outcome, EThePlacementOutcome::Rejected);
     TestTrue(TEXT("the refusal names the offending prefix"), Unknown.Error.Contains(TEXT("XYZ")));
@@ -101,7 +180,6 @@ bool FThePlacementRefusalTest::RunTest(const FString& Parameters)
     const FThePlacementResult BadContext = Resolver.Resolve(Facts(TEXT("SM_Thing"), TEXT("not-a-context")));
     TestEqual(TEXT("unknown context is rejected"), BadContext.Outcome, EThePlacementOutcome::Rejected);
 
-    // Missing facts are a closed question answered in one round trip, not advice to use judgement.
     const FThePlacementResult Incomplete = Resolver.Resolve(Facts(TEXT("SM_Tower01"), TEXT("library"),
         {{TEXT("geography"), TEXT("City")}}));
     TestEqual(TEXT("incomplete facts do not place"), Incomplete.Outcome, EThePlacementOutcome::NeedsFacts);
@@ -109,7 +187,6 @@ bool FThePlacementRefusalTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("category is named"), Incomplete.MissingFacts.Contains(TEXT("category")));
     TestTrue(TEXT("family is named"), Incomplete.MissingFacts.Contains(TEXT("family")));
 
-    // Maps carry no asset prefix; the file type is the discrimination.
     const FThePlacementResult Map = Resolver.Resolve(Facts(TEXT("L_Demo"), TEXT("map")));
     TestEqual(TEXT("an unprefixed context places without a prefix"), Map.Outcome, EThePlacementOutcome::Placed);
     TestEqual(TEXT("map placement"), Map.PackagePath, FString(TEXT("/Game/Maps/L_Demo")));
@@ -124,8 +201,6 @@ bool FThePlacementDescribesItselfTest::RunTest(const FString& Parameters)
 {
     using namespace TheQuartermasterPlacementTests;
 
-    // The config is the source of truth about the project's layout only if something other than
-    // C++ can read it back. This is that guarantee, not a getter test.
     FThePlacementResolver Resolver;
     FString Error;
     if(!TestTrue(TEXT("config loads"), Resolver.LoadConfig(ConfigPath(TEXT("placement.owh.json")), Error)))
@@ -135,7 +210,10 @@ bool FThePlacementDescribesItselfTest::RunTest(const FString& Parameters)
 
     const FThePlacementStructure Structure = Resolver.Describe();
     TestEqual(TEXT("content root"), Structure.ContentRoot, FString(TEXT("/Game")));
-    TestEqual(TEXT("every rule's context is in the context list"), Structure.Contexts.Num(), Structure.Rules.Num());
+    for(const FThePlacementRuleInfo& Rule : Structure.Rules)
+    {
+        TestTrue(FString::Printf(TEXT("context '%s' is in the context list"), *Rule.Context), Structure.Contexts.Contains(Rule.Context));
+    }
     TestTrue(TEXT("the prefix table is carried"), Structure.PrefixKinds.Contains(TEXT("SM")));
     TestTrue(TEXT("the kind directories are carried"), Structure.KindDirectories.Contains(TEXT("mesh")));
 
@@ -145,7 +223,7 @@ bool FThePlacementDescribesItselfTest::RunTest(const FString& Parameters)
     {
         return false;
     }
-    TestEqual(TEXT("its template is the config's, unexpanded"), Library->FolderTemplate, FString(TEXT("Assets/{geography}/{category}/{family}")));
+    TestEqual(TEXT("its template is the config's, unexpanded"), Library->FolderTemplate, FString(TEXT("Assets/{geography}/{category}/{family}/{kind_dir}")));
     TestEqual(TEXT("its required facts are named"), Library->Requires.Num(), 3);
     TestTrue(TEXT("a library asset carries a prefix"), Library->bRequiresPrefix);
 
@@ -164,8 +242,6 @@ bool FThePlacementRoundTripTest::RunTest(const FString& Parameters)
 {
     using namespace TheQuartermasterPlacementTests;
 
-    // Placement and explanation have to be one function read in two directions. If they can
-    // disagree, the config stops being able to explain the content it produced.
     FThePlacementResolver Owh;
     FString Error;
     if(!TestTrue(TEXT("OWH config loads"), Owh.LoadConfig(ConfigPath(TEXT("placement.owh.json")), Error)))
@@ -184,28 +260,23 @@ bool FThePlacementRoundTripTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("and the prefix read off the name"), Read.Prefix, FString(TEXT("SM")));
     TestEqual(TEXT("and its kind"), Read.Kind, FString(TEXT("mesh")));
 
-    // A shared texture is the interesting case: two rules have the same segment count, and only the
-    // one that pins Shared and the kind directory down accounts for the path.
     const FThePathExplanation Shared = Owh.Explain(TEXT("/Game/Assets/Shared/Textures/Utility/T_Noise"));
     TestEqual(TEXT("the more specific rule wins over the free-form one"), Shared.Context, FString(TEXT("shared")));
     TestEqual(TEXT("its category is recovered"), Shared.Facts.FindRef(TEXT("category")), FString(TEXT("Utility")));
 
-    // A map has no prefix at all, so only the contexts declared unprefixed may claim it.
     const FThePathExplanation Map = Owh.Explain(TEXT("/Game/Maps/L_Demo"));
     TestEqual(TEXT("a map is explained"), Map.Outcome, ETheExplanationOutcome::Matched);
     TestEqual(TEXT("as a map"), Map.Context, FString(TEXT("map")));
 
-    // The same reading against the other taxonomy, from the same code.
     FThePlacementResolver TheGame;
-    if(!TestTrue(TEXT("TheGame config loads"), TheGame.LoadConfig(ConfigPath(TEXT("placement.thegame.json")), Error)))
+    if(!TestTrue(TEXT("the forms fixture loads"), TheGame.LoadConfig(ConfigPath(TEXT("placement.forms.json")), Error)))
     {
         return false;
     }
-    const FThePathExplanation Hero = TheGame.Explain(TEXT("/Game/Characters/Hero/BP_Hero"));
-    TestEqual(TEXT("TheGame's hero is explained"), Hero.Context, FString(TEXT("hero")));
-    TestEqual(TEXT("a fully literal rule captures no facts"), Hero.Facts.Num(), 0);
+    const FThePathExplanation Persona = TheGame.Explain(TEXT("/Game/Narrative/Personas/PER_Jimmy"));
+    TestEqual(TEXT("the fixture's persona is explained"), Persona.Context, FString(TEXT("persona")));
+    TestEqual(TEXT("a fully literal rule captures no facts"), Persona.Facts.Num(), 0);
 
-    // A path one taxonomy produced is not explainable by the other, and says so instead of fitting.
     const FThePathExplanation Foreign = TheGame.Explain(Placed.PackagePath);
     TestEqual(TEXT("another project's path is not fitted to this taxonomy"), Foreign.Outcome, ETheExplanationOutcome::Unmatched);
     return true;
@@ -223,14 +294,11 @@ bool FThePlacementExplanationRefusalTest::RunTest(const FString& Parameters)
         return false;
     }
 
-    // Legacy content is exactly what this is pointed at, and a rule that "nearly" fits would turn
-    // an unmigrated pack into a compliant one on paper.
     const FThePathExplanation Legacy = Resolver.Explain(TEXT("/Game/MenuSystemPro/Text/ST_Menu"));
     TestEqual(TEXT("an unmigrated path matches nothing"), Legacy.Outcome, ETheExplanationOutcome::Unmatched);
     TestTrue(TEXT("and the refusal names the path"), Legacy.Error.Contains(TEXT("MenuSystemPro")));
 
-    // Right root, wrong depth: the near-miss is reported as diagnosis, and the verdict stays refusal.
-    const FThePathExplanation TooDeep = Resolver.Explain(TEXT("/Game/Assets/City/Buildings/Kits/Set01/Meshes/SM_Wall01"));
+    const FThePathExplanation TooDeep = Resolver.Explain(TEXT("/Game/Assets/City/Buildings/Kits/Set01/Meshes/Parts/SM_Wall01"));
     TestEqual(TEXT("a deeper route than any rule declares is refused"), TooDeep.Outcome, ETheExplanationOutcome::Unmatched);
     TestTrue(TEXT("the rules sharing its first segment are named as near misses"), TooDeep.CandidateContexts.Contains(TEXT("library")));
 
@@ -240,8 +308,6 @@ bool FThePlacementExplanationRefusalTest::RunTest(const FString& Parameters)
     const FThePathExplanation NoFolder = Resolver.Explain(TEXT("/Game/SM_Loose"));
     TestEqual(TEXT("a package with no folder is refused"), NoFolder.Outcome, ETheExplanationOutcome::Unmatched);
 
-    // A taxonomy in which one path satisfies two rules equally is a defect in the taxonomy. Say so
-    // rather than letting rule order decide.
     FThePlacementResolver Ambiguous;
     const FString TwoWays = TEXT(R"json({
         "content_root": "/Game",

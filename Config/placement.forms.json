@@ -1,0 +1,117 @@
+{
+  "_comment": "The schema's own fixture: a taxonomy that belongs to no project and exists only to exercise every form the schema claims to express. It is deliberately NOT a copy of a live project's layout - a fixture that tracks a real taxonomy drifts from it silently, which is the defect that took TheGame's copy out of this folder.",
+  "schema_version": 2,
+  "content_root": "/Game",
+
+  "top_level": {
+    "roots": ["Assets", "Characters", "Core", "Narrative", "Maps"],
+    "exceptions": ["_Quarantine"]
+  },
+
+  "prefixes": {
+    "SM": "mesh", "SK": "mesh",
+    "M": "material", "MI": "material",
+    "T": "texture",
+    "PHYS": "physics",
+    "BP": "blueprint",
+    "DLG": "narrative", "PER": "narrative", "QST": "narrative"
+  },
+
+  "kind_directories": {
+    "mesh": "Meshes",
+    "material": "Materials",
+    "texture": "Textures"
+  },
+
+  "unprefixed_contexts": ["map"],
+
+  "_lint_comment": "A flat library is the one-pattern case: the family is the single segment below Assets, and the fixture declares no assemblies so the compositional rule stays opt-in rather than something every project inherits.",
+  "lint": {
+    "shared_folder": "Assets/Shared",
+    "family_root": "Assets",
+    "family_patterns": ["*"],
+    "forbidden_folder_prefixes": ["_"],
+    "rule_severity": {},
+    "acknowledged_cross_family": []
+  },
+
+  "redirects": [
+    {
+      "context": "character",
+      "prefix": "PER",
+      "to": "persona",
+      "why": "a persona is narrative, not a resource the character folder owns"
+    }
+  ],
+
+  "rules": [
+    {
+      "_form": "1 - a subfolder that depends on the prefix INSIDE a context, and collapses when the rig itself is being placed",
+      "context": "character",
+      "folder": "Characters/{entity}/{sub}",
+      "requires": ["entity"],
+      "sub": {
+        "by": "kind",
+        "use": "kind_directories",
+        "default": "",
+        "root_prefixes": ["SK", "PHYS", "BP"]
+      }
+    },
+    {
+      "_form": "2 - a closed list of a fact's values, and 4 - a value whose whole meaning is the absence of the level",
+      "context": "surface",
+      "folder": "Assets/Shared/Materials/{category}",
+      "requires": ["category"],
+      "facts": {
+        "category": {
+          "one_of": ["Water", "Landscape", "Any"],
+          "collapse": { "Any": "" }
+        }
+      }
+    },
+    {
+      "_form": "3 - the shape of a fact as a pattern, plus a sub resolved by PREFIX rather than by kind",
+      "context": "chapter",
+      "folder": "Narrative/Chapters/{chapter}/{sub}",
+      "requires": ["chapter"],
+      "facts": { "chapter": { "pattern": "^Ch[0-9]{2}_[A-Za-z0-9]+$" } },
+      "sub": {
+        "by": "prefix",
+        "map": { "DLG": "Dialogues", "QST": "Quests" },
+        "default": "Assets"
+      }
+    },
+    {
+      "_form": "4 - a refusal at the level of one VALUE, and a fact that spans several segments",
+      "context": "library",
+      "folder": "Assets/{category}/{entity}",
+      "requires": ["category", "entity"],
+      "facts": {
+        "category": {
+          "not": ["Shared"],
+          "spans": 2,
+          "why": "Shared is not a section"
+        }
+      }
+    },
+    {
+      "_form": "5 - the destination of the cross-context redirect",
+      "context": "persona",
+      "folder": "Narrative/Personas"
+    },
+    {
+      "_form": "an optional fact: the level exists only when the caller names it",
+      "context": "shared",
+      "folder": "Assets/Shared/{kind_dir}/{category}",
+      "optional_facts": ["category"]
+    },
+    {
+      "_form": "a name the context refuses outright, whatever the facts",
+      "context": "map",
+      "folder": "Maps",
+      "name_refuses": [
+        { "starts_with": "L_", "why": "maps carry no prefix - the .umap file type is the discrimination" }
+      ]
+    }
+  ]
+}

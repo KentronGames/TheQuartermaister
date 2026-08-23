@@ -2,6 +2,7 @@
 
 #include "Placement/ThePlacementResolver.h"
 
+#include "Internationalization/Regex.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Serialization/JsonReader.h"
@@ -20,7 +21,6 @@ FThePlacementResult Reject(const FString& Error)
     return Result;
 }
 
-/** The placeholder name when a template segment is exactly one placeholder, e.g. {family}. */
 bool WholeSegmentToken(const FString& Segment, FString& OutToken)
 {
     if(Segment.Len() < 3 || !Segment.StartsWith(TEXT("{")) || !Segment.EndsWith(TEXT("}")))
@@ -28,7 +28,6 @@ bool WholeSegmentToken(const FString& Segment, FString& OutToken)
         return false;
     }
     OutToken = Segment.Mid(1, Segment.Len() - 2);
-    // A segment such as {a}x{b} also starts and ends with braces without being one placeholder.
     return !OutToken.Contains(TEXT("{")) && !OutToken.Contains(TEXT("}"));
 }
 
@@ -66,8 +65,6 @@ bool FThePlacementResolver::LoadProjectConfig(FThePlacementResolver& OutResolver
     const FString ConfigPath = UTheQuartermasterSettings::ResolvedPlacementConfigPath();
     if(ConfigPath.IsEmpty())
     {
-        // No default and no search. A guessed taxonomy is worse than none: it answers confidently
-        // with another project's structure, and nothing in the answer says so.
         OutError = TEXT("no placement config: set PlacementConfigPath in the project's Editor settings");
         return false;
     }
@@ -119,12 +116,42 @@ bool FThePlacementResolver::LoadConfigFromString(const FString& Json, FString& O
         (*Object)->TryGetStringField(TEXT("context"), Rule.Context);
         (*Object)->TryGetStringField(TEXT("folder"), Rule.Folder);
         (*Object)->TryGetStringArrayField(TEXT("requires"), Rule.Requires);
+        (*Object)->TryGetStringArrayField(TEXT("optional_facts"), Rule.OptionalFacts);
         if(Rule.Context.IsEmpty() || Rule.Folder.IsEmpty())
         {
             OutError = TEXT("every placement rule needs a context and a folder");
             return false;
         }
+        if(!ReadFacts(*Object, Rule, OutError) || !ReadSub(*Object, Rule, OutError))
+        {
+            return false;
+        }
+        ReadNameRefusals(*Object, Rule);
         Rules.Add(MoveTemp(Rule));
+    }
+
+    const TArray<TSharedPtr<FJsonValue>>* RedirectValues = nullptr;
+    if(Root->TryGetArrayField(TEXT("redirects"), RedirectValues))
+    {
+        for(const TSharedPtr<FJsonValue>& Value : *RedirectValues)
+        {
+            const TSharedPtr<FJsonObject>* Object = nullptr;
+            if(!Value->TryGetObject(Object))
+            {
+                continue;
+            }
+            FRedirect Redirect;
+            (*Object)->TryGetStringField(TEXT("context"), Redirect.Context);
+            (*Object)->TryGetStringField(TEXT("prefix"), Redirect.Prefix);
+            (*Object)->TryGetStringField(TEXT("to"), Redirect.To);
+            (*Object)->TryGetStringField(TEXT("why"), Redirect.Why);
+            if(Redirect.Context.IsEmpty() || Redirect.Prefix.IsEmpty() || Redirect.To.IsEmpty())
+            {
+                OutError = TEXT("every redirect needs a context, a prefix and a destination context");
+                return false;
+            }
+            Redirects.Add(MoveTemp(Redirect));
+        }
     }
 
     if(Contexts.IsEmpty())
@@ -135,6 +162,140 @@ bool FThePlacementResolver::LoadConfigFromString(const FString& Json, FString& O
         }
     }
     return true;
+}
+
+bool FThePlacementResolver::ReadFacts(const TSharedPtr<FJsonObject>& Object, FRule& Rule, FString& OutError)
+{
+    const TSharedPtr<FJsonObject>* Facts = nullptr;
+    if(!Object->TryGetObjectField(TEXT("facts"), Facts))
+    {
+        return true;
+    }
+    for(const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*Facts)->Values)
+    {
+        const TSharedPtr<FJsonObject>* Body = nullptr;
+        if(!Pair.Value->TryGetObject(Body))
+        {
+            OutError = FString::Printf(TEXT("fact '%s' of context '%s' is not an object"), *Pair.Key, *Rule.Context);
+            return false;
+        }
+        FFactConstraint Constraint;
+        (*Body)->TryGetStringArrayField(TEXT("one_of"), Constraint.OneOf);
+        (*Body)->TryGetStringArrayField(TEXT("not"), Constraint.Excluded);
+        (*Body)->TryGetStringField(TEXT("pattern"), Constraint.Pattern);
+        (*Body)->TryGetStringField(TEXT("why"), Constraint.Why);
+        int32 Spans = 1;
+        if((*Body)->TryGetNumberField(TEXT("spans"), Spans) && Spans > 0)
+        {
+            Constraint.Spans = Spans;
+        }
+        ReadStringMap(*Body, TEXT("collapse"), Constraint.Collapse);
+        Rule.Facts.Add(Pair.Key, MoveTemp(Constraint));
+    }
+    return true;
+}
+
+bool FThePlacementResolver::ReadSub(const TSharedPtr<FJsonObject>& Object, FRule& Rule, FString& OutError)
+{
+    const TSharedPtr<FJsonObject>* Sub = nullptr;
+    if(!Object->TryGetObjectField(TEXT("sub"), Sub))
+    {
+        return true;
+    }
+    FString By;
+    (*Sub)->TryGetStringField(TEXT("by"), By);
+    if(!By.Equals(TEXT("kind"), ESearchCase::IgnoreCase) && !By.Equals(TEXT("prefix"), ESearchCase::IgnoreCase))
+    {
+        OutError = FString::Printf(TEXT("context '%s' declares a sub with no readable 'by' - it is either 'kind' or 'prefix'"), *Rule.Context);
+        return false;
+    }
+    Rule.Sub.bDeclared = true;
+    Rule.Sub.bByPrefix = By.Equals(TEXT("prefix"), ESearchCase::IgnoreCase);
+    FString Use;
+    (*Sub)->TryGetStringField(TEXT("use"), Use);
+    Rule.Sub.bUseKindDirectories = Use.Equals(TEXT("kind_directories"), ESearchCase::IgnoreCase);
+    (*Sub)->TryGetStringField(TEXT("default"), Rule.Sub.Default);
+    (*Sub)->TryGetStringArrayField(TEXT("root_prefixes"), Rule.Sub.RootPrefixes);
+    ReadStringMap(*Sub, TEXT("map"), Rule.Sub.Map);
+    return true;
+}
+
+void FThePlacementResolver::ReadNameRefusals(const TSharedPtr<FJsonObject>& Object, FRule& Rule)
+{
+    const TArray<TSharedPtr<FJsonValue>>* Refusals = nullptr;
+    if(!Object->TryGetArrayField(TEXT("name_refuses"), Refusals))
+    {
+        return;
+    }
+    for(const TSharedPtr<FJsonValue>& Value : *Refusals)
+    {
+        const TSharedPtr<FJsonObject>* Body = nullptr;
+        if(!Value->TryGetObject(Body))
+        {
+            continue;
+        }
+        FNameRefusal Refusal;
+        (*Body)->TryGetStringField(TEXT("starts_with"), Refusal.StartsWith);
+        (*Body)->TryGetStringField(TEXT("why"), Refusal.Why);
+        if(!Refusal.StartsWith.IsEmpty())
+        {
+            Rule.NameRefuses.Add(MoveTemp(Refusal));
+        }
+    }
+}
+
+FString FThePlacementResolver::SubFor(const FRule& Rule, const FString& Prefix, const FString& Kind, bool& bOutDeclared) const
+{
+    bOutDeclared = Rule.Sub.bDeclared;
+    if(!Rule.Sub.bDeclared)
+    {
+        return FString();
+    }
+    if(!Prefix.IsEmpty() && Rule.Sub.RootPrefixes.Contains(Prefix))
+    {
+        return FString();
+    }
+    const FString& Key = Rule.Sub.bByPrefix ? Prefix : Kind;
+    const TMap<FString, FString>& Table = Rule.Sub.bUseKindDirectories ? KindDirectories : Rule.Sub.Map;
+    if(!Key.IsEmpty())
+    {
+        if(const FString* Found = Table.Find(Key))
+        {
+            return *Found;
+        }
+    }
+    return Rule.Sub.Default;
+}
+
+FString FThePlacementResolver::RefusalByFacts(const FRule& Rule, const TMap<FString, FString>& Values) const
+{
+    for(const TPair<FString, FFactConstraint>& Pair : Rule.Facts)
+    {
+        const FString* Value = Values.Find(Pair.Key);
+        if(!Value || Value->IsEmpty())
+        {
+            continue;
+        }
+        const FFactConstraint& Constraint = Pair.Value;
+        if(Constraint.Excluded.Contains(*Value))
+        {
+            return FString::Printf(TEXT("'%s' is not a valid %s for context '%s'%s%s"), **Value, *Pair.Key, *Rule.Context, Constraint.Why.IsEmpty() ? TEXT("") : TEXT(" - "), *Constraint.Why);
+        }
+        if(Constraint.OneOf.Num() > 0 && !Constraint.OneOf.Contains(*Value))
+        {
+            return FString::Printf(TEXT("'%s' is not a %s for context '%s' - use one of %s"), **Value, *Pair.Key, *Rule.Context, *FString::Join(Constraint.OneOf, TEXT(", ")));
+        }
+        if(!Constraint.Pattern.IsEmpty())
+        {
+            const FRegexPattern Pattern(Constraint.Pattern);
+            FRegexMatcher Matcher(Pattern, *Value);
+            if(!Matcher.FindNext())
+            {
+                return FString::Printf(TEXT("%s '%s' does not have the shape %s"), *Pair.Key, **Value, *Constraint.Pattern);
+            }
+        }
+    }
+    return FString();
 }
 
 FString FThePlacementResolver::ParsePrefix(const FString& Name) const
@@ -160,8 +321,7 @@ FThePlacementResult FThePlacementResolver::Resolve(const FThePlacementFacts& Fac
     }
     if(!Contexts.Contains(Facts.Context))
     {
-        return Reject(FString::Printf(TEXT("context '%s' is not in the configured set: %s"),
-            *Facts.Context, *FString::Join(Contexts, TEXT(", "))));
+        return Reject(FString::Printf(TEXT("context '%s' is not in the configured set: %s"), *Facts.Context, *FString::Join(Contexts, TEXT(", "))));
     }
 
     FThePlacementResult Result;
@@ -175,12 +335,9 @@ FThePlacementResult FThePlacementResolver::Resolve(const FThePlacementFacts& Fac
     if(Result.Prefix.IsEmpty() && !bContextTakesNoPrefix)
     {
         int32 Underscore = INDEX_NONE;
-        // A name that LOOKS prefixed but carries an unknown prefix is a naming-table violation.
-        // Guessing a folder for it would quietly launder the violation into the structure.
         if(Facts.Name.FindChar(TEXT('_'), Underscore) && Underscore > 0)
         {
-            return Reject(FString::Printf(TEXT("'%s' carries prefix '%s', which the config's prefix table does not declare; add it there first"),
-                *Facts.Name, *Facts.Name.Left(Underscore)));
+            return Reject(FString::Printf(TEXT("'%s' carries prefix '%s', which the config's prefix table does not declare; add it there first"), *Facts.Name, *Facts.Name.Left(Underscore)));
         }
         return Reject(FString::Printf(TEXT("'%s' has no prefix, and context '%s' requires one"), *Facts.Name, *Facts.Context));
     }
@@ -191,8 +348,28 @@ FThePlacementResult FThePlacementResolver::Resolve(const FThePlacementFacts& Fac
         return Reject(FString::Printf(TEXT("no rule for context '%s'"), *Facts.Context));
     }
 
-    // Facts are resolved as a set before any substitution, so the caller gets the WHOLE closed list
-    // of what is missing in one answer instead of discovering it one round trip at a time.
+    for(const FNameRefusal& Refusal : Matched->NameRefuses)
+    {
+        if(Facts.Name.StartsWith(Refusal.StartsWith, ESearchCase::CaseSensitive))
+        {
+            return Reject(FString::Printf(TEXT("'%s' - %s"), *Facts.Name, *Refusal.Why));
+        }
+    }
+
+    for(const FRedirect& Redirect : Redirects)
+    {
+        if(Redirect.Context == Facts.Context && Redirect.Prefix == Result.Prefix)
+        {
+            return Reject(FString::Printf(TEXT("'%s' does not belong in context '%s' - %s; use context '%s'"), *Facts.Name, *Facts.Context, *Redirect.Why, *Redirect.To));
+        }
+    }
+
+    const FString Refusal = RefusalByFacts(*Matched, Facts.Values);
+    if(!Refusal.IsEmpty())
+    {
+        return Reject(Refusal);
+    }
+
     TArray<FString> Missing;
     for(const FString& Required : Matched->Requires)
     {
@@ -203,33 +380,78 @@ FThePlacementResult FThePlacementResolver::Resolve(const FThePlacementFacts& Fac
         }
     }
 
-    FString Folder = Matched->Folder;
-    if(Folder.Contains(TEXT("{kind_dir}")))
+    if(Matched->Folder.Contains(TEXT("{kind_dir}")))
     {
         const FString* Directory = Result.Kind.IsEmpty() ? nullptr : KindDirectories.Find(Result.Kind);
         if(!Directory)
         {
-            return Reject(FString::Printf(TEXT("context '%s' places by resource kind, but kind '%s' has no directory in kind_directories"),
-                *Facts.Context, *Result.Kind));
+            return Reject(FString::Printf(TEXT("context '%s' places by resource kind, but kind '%s' has no directory in kind_directories"), *Facts.Context, *Result.Kind));
         }
-        Folder = Folder.Replace(TEXT("{kind_dir}"), **Directory);
     }
 
-    for(const TPair<FString, FString>& Pair : Facts.Values)
-    {
-        Folder = Folder.Replace(*FString::Printf(TEXT("{%s}"), *Pair.Key), *Pair.Value);
-    }
+    bool bSubDeclared = false;
+    const FString Sub = SubFor(*Matched, Result.Prefix, Result.Kind, bSubDeclared);
 
-    int32 OpenBrace = INDEX_NONE;
-    if(Folder.FindChar(TEXT('{'), OpenBrace))
+    TArray<FString> TemplateSegments;
+    Matched->Folder.ParseIntoArray(TemplateSegments, TEXT("/"), /*InCullEmpty*/ true);
+    TArray<FString> Built;
+    for(const FString& Segment : TemplateSegments)
     {
-        int32 CloseBrace = INDEX_NONE;
-        Folder.FindChar(TEXT('}'), CloseBrace);
-        if(CloseBrace > OpenBrace)
+        FString Token;
+        if(!WholeSegmentToken(Segment, Token))
         {
-            Missing.AddUnique(Folder.Mid(OpenBrace + 1, CloseBrace - OpenBrace - 1));
+            FString Filled = Segment;
+            for(const TPair<FString, FString>& Pair : Facts.Values)
+            {
+                Filled = Filled.Replace(*FString::Printf(TEXT("{%s}"), *Pair.Key), *Pair.Value);
+            }
+            int32 Open = INDEX_NONE;
+            if(Filled.FindChar(TEXT('{'), Open))
+            {
+                int32 Close = INDEX_NONE;
+                Filled.FindChar(TEXT('}'), Close);
+                if(Close > Open)
+                {
+                    Missing.AddUnique(Filled.Mid(Open + 1, Close - Open - 1));
+                }
+                continue;
+            }
+            Built.Add(Filled);
+            continue;
         }
+
+        if(Token == TEXT("sub"))
+        {
+            if(!Sub.IsEmpty())
+            {
+                Built.Add(Sub);
+            }
+            continue;
+        }
+        if(Token == TEXT("kind_dir"))
+        {
+            const FString* Directory = Result.Kind.IsEmpty() ? nullptr : KindDirectories.Find(Result.Kind);
+            Built.Add(Directory ? *Directory : FString());
+            continue;
+        }
+
+        const FString* Raw = Facts.Values.Find(Token);
+        const FFactConstraint* Constraint = Matched->Facts.Find(Token);
+        const FString* Collapsed = (Raw && Constraint) ? Constraint->Collapse.Find(*Raw) : nullptr;
+        const FString Value = Collapsed ? *Collapsed : (Raw ? *Raw : FString());
+        if(!Value.IsEmpty())
+        {
+            Built.Add(Value);
+            continue;
+        }
+        if(Collapsed || Matched->OptionalFacts.Contains(Token))
+        {
+            continue;
+        }
+        Missing.AddUnique(Token);
     }
+
+    const FString Folder = FString::Join(Built.FilterByPredicate([](const FString& S) { return !S.IsEmpty(); }), TEXT("/"));
 
     if(!Missing.IsEmpty())
     {
@@ -266,61 +488,131 @@ FThePlacementStructure FThePlacementResolver::Describe() const
     return Structure;
 }
 
-bool FThePlacementResolver::RuleAccountsForFolder(const FRule& Rule, const TArray<FString>& FolderSegments,
-    const FString& Kind, TMap<FString, FString>& OutFacts, int32& OutLiteralSegments) const
+bool FThePlacementResolver::MatchTemplateSegments(const FRule& Rule, const TArray<FString>& Template, int32 TemplateAt, const TArray<FString>& Folder, int32 FolderAt, const FString& Sub, const FString& Kind, TMap<FString, FString>& OutFacts) const
 {
-    TArray<FString> TemplateSegments;
-    Rule.Folder.ParseIntoArray(TemplateSegments, TEXT("/"), /*InCullEmpty*/ true);
-    if(TemplateSegments.Num() != FolderSegments.Num())
+    if(TemplateAt >= Template.Num())
     {
+        return FolderAt >= Folder.Num();
+    }
+
+    const FString& Segment = Template[TemplateAt];
+    FString Token;
+    if(WholeSegmentToken(Segment, Token))
+    {
+        if(Token == TEXT("sub") || Token == TEXT("kind_dir"))
+        {
+            FString Expected = Sub;
+            if(Token == TEXT("kind_dir"))
+            {
+                const FString* Directory = Kind.IsEmpty() ? nullptr : KindDirectories.Find(Kind);
+                Expected = Directory ? *Directory : FString();
+                if(Expected.IsEmpty())
+                {
+                    return false;
+                }
+            }
+            if(Expected.IsEmpty())
+            {
+                return MatchTemplateSegments(Rule, Template, TemplateAt + 1, Folder, FolderAt, Sub, Kind, OutFacts);
+            }
+            if(FolderAt >= Folder.Num() || !Folder[FolderAt].Equals(Expected, ESearchCase::IgnoreCase))
+            {
+                return false;
+            }
+            return MatchTemplateSegments(Rule, Template, TemplateAt + 1, Folder, FolderAt + 1, Sub, Kind, OutFacts);
+        }
+
+        const FFactConstraint* Constraint = Rule.Facts.Find(Token);
+        bool bCollapsible = false;
+        if(Constraint)
+        {
+            for(const TPair<FString, FString>& Pair : Constraint->Collapse)
+            {
+                if(Pair.Value.IsEmpty())
+                {
+                    bCollapsible = true;
+                    break;
+                }
+            }
+        }
+        if((bCollapsible || Rule.OptionalFacts.Contains(Token)) && MatchTemplateSegments(Rule, Template, TemplateAt + 1, Folder, FolderAt, Sub, Kind, OutFacts))
+        {
+            return true;
+        }
+
+        const int32 Most = FMath::Min(Constraint ? Constraint->Spans : 1, Folder.Num() - FolderAt);
+        for(int32 Take = 1; Take <= Most; ++Take)
+        {
+            TArray<FString> Slice;
+            for(int32 Index = 0; Index < Take; ++Index)
+            {
+                Slice.Add(Folder[FolderAt + Index]);
+            }
+            const FString Value = FString::Join(Slice, TEXT("/"));
+            if(Value.IsEmpty())
+            {
+                continue;
+            }
+            if(Constraint)
+            {
+                if(Constraint->Excluded.Contains(Value))
+                {
+                    continue;
+                }
+                if(Constraint->OneOf.Num() > 0 && !Constraint->OneOf.Contains(Value))
+                {
+                    continue;
+                }
+                if(!Constraint->Pattern.IsEmpty())
+                {
+                    const FRegexPattern Pattern(Constraint->Pattern);
+                    FRegexMatcher Matcher(Pattern, Value);
+                    if(!Matcher.FindNext())
+                    {
+                        continue;
+                    }
+                }
+            }
+            TMap<FString, FString> Nested = OutFacts;
+            Nested.Add(Token, Value);
+            if(MatchTemplateSegments(Rule, Template, TemplateAt + 1, Folder, FolderAt + Take, Sub, Kind, Nested))
+            {
+                OutFacts = MoveTemp(Nested);
+                return true;
+            }
+        }
         return false;
     }
 
+    if(Segment.Contains(TEXT("{")))
+    {
+        return false;
+    }
+    if(FolderAt >= Folder.Num() || !Segment.Equals(Folder[FolderAt], ESearchCase::IgnoreCase))
+    {
+        return false;
+    }
+    return MatchTemplateSegments(Rule, Template, TemplateAt + 1, Folder, FolderAt + 1, Sub, Kind, OutFacts);
+}
+
+bool FThePlacementResolver::RuleAccountsForFolder(const FRule& Rule, const TArray<FString>& FolderSegments, const FString& Prefix, const FString& Kind, TMap<FString, FString>& OutFacts, int32& OutLiteralSegments) const
+{
+    TArray<FString> TemplateSegments;
+    Rule.Folder.ParseIntoArray(TemplateSegments, TEXT("/"), /*InCullEmpty*/ true);
+
     OutFacts.Reset();
     OutLiteralSegments = 0;
-
-    for(int32 Index = 0; Index < TemplateSegments.Num(); ++Index)
+    for(const FString& Segment : TemplateSegments)
     {
-        const FString& Template = TemplateSegments[Index];
-        const FString& Actual = FolderSegments[Index];
-
-        FString Token;
-        if(!WholeSegmentToken(Template, Token))
+        if(!Segment.Contains(TEXT("{")))
         {
-            // A template segment that is neither a whole placeholder nor plain literal text cannot
-            // be read backwards without guessing where the placeholder ends. Refuse the rule.
-            if(Template.Contains(TEXT("{")))
-            {
-                return false;
-            }
-            if(!Template.Equals(Actual, ESearchCase::IgnoreCase))
-            {
-                return false;
-            }
             ++OutLiteralSegments;
-            continue;
         }
-
-        if(Token == TEXT("kind_dir"))
-        {
-            // The kind comes from the asset's own prefix, so this segment is fixed by the name
-            // rather than free: it is evidence, not a captured fact.
-            const FString* Directory = Kind.IsEmpty() ? nullptr : KindDirectories.Find(Kind);
-            if(!Directory || !Directory->Equals(Actual, ESearchCase::IgnoreCase))
-            {
-                return false;
-            }
-            ++OutLiteralSegments;
-            continue;
-        }
-
-        if(Actual.IsEmpty())
-        {
-            return false;
-        }
-        OutFacts.Add(Token, Actual);
     }
-    return true;
+
+    bool bSubDeclared = false;
+    const FString Sub = SubFor(Rule, Prefix, Kind, bSubDeclared);
+    return MatchTemplateSegments(Rule, TemplateSegments, 0, FolderSegments, 0, Sub, Kind, OutFacts);
 }
 
 FThePathExplanation FThePlacementResolver::Explain(const FString& PackagePath) const
@@ -370,15 +662,21 @@ FThePathExplanation FThePlacementResolver::Explain(const FString& PackagePath) c
     TArray<FMatch> Matches;
     for(const FRule& Rule : Rules)
     {
-        // A context that demands a prefix cannot have produced a package whose name carries none;
-        // Resolve would have refused it, so accepting it here would let the two disagree.
         if(Explanation.Prefix.IsEmpty() && !UnprefixedContexts.Contains(Rule.Context))
+        {
+            continue;
+        }
+        if(Rule.NameRefuses.ContainsByPredicate([&Explanation](const FNameRefusal& Refusal) { return Explanation.Name.StartsWith(Refusal.StartsWith, ESearchCase::CaseSensitive); }))
+        {
+            continue;
+        }
+        if(Redirects.ContainsByPredicate([&Rule, &Explanation](const FRedirect& Redirect) { return Redirect.Context == Rule.Context && Redirect.Prefix == Explanation.Prefix; }))
         {
             continue;
         }
 
         FMatch Match;
-        if(RuleAccountsForFolder(Rule, Segments, Explanation.Kind, Match.Facts, Match.LiteralSegments))
+        if(RuleAccountsForFolder(Rule, Segments, Explanation.Prefix, Explanation.Kind, Match.Facts, Match.LiteralSegments))
         {
             Match.Rule = &Rule;
             Matches.Add(MoveTemp(Match));
@@ -401,8 +699,6 @@ FThePathExplanation FThePlacementResolver::Explain(const FString& PackagePath) c
         return Explanation;
     }
 
-    // More literal segments means the template pinned more of the path down, so it is the more
-    // specific account of it. Equal specificity is a genuine ambiguity in the taxonomy.
     int32 MostLiteral = 0;
     for(const FMatch& Match : Matches)
     {
@@ -426,8 +722,7 @@ FThePathExplanation FThePlacementResolver::Explain(const FString& PackagePath) c
             Explanation.CandidateContexts.AddUnique(Match->Rule->Context);
         }
         Explanation.CandidateContexts.Sort();
-        Explanation.Error = FString::Printf(TEXT("'%s' satisfies %d rules equally well: %s"),
-            *PackagePath, Explanation.CandidateContexts.Num(), *FString::Join(Explanation.CandidateContexts, TEXT(", ")));
+        Explanation.Error = FString::Printf(TEXT("'%s' satisfies %d rules equally well: %s"), *PackagePath, Explanation.CandidateContexts.Num(), *FString::Join(Explanation.CandidateContexts, TEXT(", ")));
         return Explanation;
     }
 
