@@ -1,6 +1,5 @@
 # What the quarantine port is and is not proven to do
 
-Written 2026-08-14, at the end of the port from TheGame's `TheLibrarian`.
 Its purpose is to stop "it built and the tests are green" from being mistaken
 for "it is proven". Update it when coverage changes.
 
