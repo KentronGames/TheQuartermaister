@@ -9,6 +9,11 @@
  * the files on disk, and register one prefix Core Redirect so the pack's baked-in /Game/<Pack>/
  * references still resolve. That is what makes quarantine cheap enough to be reversible — nothing
  * in the project is rewritten, so restoring is the same move backwards.
+ *
+ * Moving the directory whole is tried first and is not relied on: it fails across volumes and on
+ * partially-locked trees, so the fallback moves file by file and rolls back on the first failure.
+ * A half-moved folder is the outcome worth extra code to avoid - neither path would then hold a
+ * working pack.
  */
 class THEQUARTERMASTER_API FTheFolderQuarantine
 {
@@ -16,9 +21,28 @@ public:
     /** Configured root, normalised. Not a constant: the destination is a per-project decision. */
     static FString QuarantineRoot();
 
+    /**
+     * Parks the folder and records where it came from. The .origin marker is what lets the redirect
+     * be rebuilt after a restart, so a move that cannot write it is rolled back rather than left:
+     * a folder parked without a marker silently breaks every reference into it.
+     */
     static bool MoveToQuarantine(const FString& SourceFolder, FString& OutReport, bool& OutNeedsRestart, FString& OutError);
 
+    /**
+     * What MoveToQuarantine would do, writing nothing. Every refusal the real call makes is made
+     * here too, so a plan that returns is a move that will land.
+     */
+    static bool PlanMoveToQuarantine(const FString& SourceFolder, FString& OutReport, FString& OutError);
+
+    /**
+     * Removes a parked folder for good. Refuses a folder that is not on disk: a delete that reports
+     * success for a path that never existed makes a mistyped path indistinguishable from a real
+     * removal, and the caller then believes a pack is gone that is still sitting under its own name.
+     */
     static bool DeleteFromQuarantine(const FString& Folder, FString& OutReport, FString& OutError);
+
+    /** What DeleteFromQuarantine would remove, writing nothing. */
+    static bool PlanDeleteFromQuarantine(const FString& Folder, FString& OutReport, FString& OutError);
 
     static bool RestoreFromQuarantine(const FString& Folder, FString& OutReport, bool& OutNeedsRestart, FString& OutError);
 
@@ -30,6 +54,11 @@ public:
 
     static bool VerifyRestoredFromQuarantine(const FString& SourceFolder, FString& OutReport, FString& OutError);
 
+    /**
+     * Absence proves a deletion only where a deletion could have happened, so this refuses outright
+     * when the quarantine root itself is missing from disk - there a green answer would mean nothing
+     * beyond the path never having been used.
+     */
     static bool VerifyQuarantineDeleted(const FString& Folder, FString& OutReport, FString& OutError);
 
     /** Re-registers redirects from the .origin markers on disk. Redirects do not survive a restart. */

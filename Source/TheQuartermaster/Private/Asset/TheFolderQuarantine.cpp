@@ -65,6 +65,14 @@ bool RefuseUnlessInsideQuarantine(const FString& Clean, FString& OutError)
     return true;
 }
 
+int32 PackagesUnder(const FString& Folder)
+{
+    IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+    TArray<FAssetData> Assets;
+    Registry.GetAssetsByPath(FName(*Folder), Assets, /*bRecursive*/ true);
+    return Assets.Num();
+}
+
 bool UnloadAndCollect(const FString& Folder)
 {
     TArray<UPackage*> ToUnload;
@@ -101,9 +109,6 @@ bool MoveDirOnDisk(const FString& SrcAbs, const FString& DestAbs, FString& OutEr
         return true;
     }
 
-    // The whole-directory move fails across volumes and on partially-locked trees, so fall back to
-    // per-file moves and roll them back on the first failure. A half-moved folder is the one
-    // outcome worth extra code to avoid: neither path would then hold a working pack.
     TArray<FString> Files;
     FileManager.FindFilesRecursive(Files, *SrcAbs, TEXT("*"), /*Files*/ true, /*Directories*/ false);
     TArray<TPair<FString, FString>> Moved;
@@ -150,6 +155,43 @@ FString FTheFolderQuarantine::QuarantineRoot()
     return UTheQuartermasterSettings::ResolvedQuarantineRoot();
 }
 
+bool FTheFolderQuarantine::PlanMoveToQuarantine(const FString& SourceFolder, FString& OutReport, FString& OutError)
+{
+    FString Folder = SourceFolder;
+    Folder.RemoveFromEnd(TEXT("/"));
+    if(!Folder.StartsWith(TEXT("/Game/")))
+    {
+        OutError = TEXT("only /Game/ folders can be quarantined");
+        return false;
+    }
+    if(Folder.StartsWith(QuarantineRoot()))
+    {
+        OutError = TEXT("already in quarantine");
+        return false;
+    }
+
+    const FString Target = QuarantineRoot() / FPaths::GetCleanFilename(Folder);
+    if(IFileManager::Get().DirectoryExists(*GameFolderToDisk(Target)))
+    {
+        OutError = FString::Printf(TEXT("%s already exists in quarantine"), *Target);
+        return false;
+    }
+    if(!IFileManager::Get().DirectoryExists(*GameFolderToDisk(Folder)))
+    {
+        OutError = FString::Printf(TEXT("%s does not exist on disk"), *Folder);
+        return false;
+    }
+
+    OutReport = FString::Printf(TEXT("PLAN: move %s -> %s (%d asset(s)), add the redirect %s/ -> %s/, write the .origin marker.\nQuarantine is a transient state kept out of version control: once moved, %s exists only on this machine until RestoreFromQuarantine brings it back."),
+        *Folder,
+        *Target,
+        PackagesUnder(Folder),
+        *Folder,
+        *Target,
+        *Folder);
+    return true;
+}
+
 bool FTheFolderQuarantine::MoveToQuarantine(const FString& SourceFolder, FString& OutReport, bool& OutNeedsRestart, FString& OutError)
 {
     OutNeedsRestart = false;
@@ -186,8 +228,6 @@ bool FTheFolderQuarantine::MoveToQuarantine(const FString& SourceFolder, FString
 
     IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
 
-    // Without the marker the redirect cannot be rebuilt after a restart, so a folder parked here
-    // would silently break every reference into it. Roll the move back rather than leave that.
     if(!FFileHelper::SaveStringToFile(Folder, *OriginMarkerPath(Target), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
     {
         FString RollbackError;
@@ -217,12 +257,43 @@ bool FTheFolderQuarantine::MoveToQuarantine(const FString& SourceFolder, FString
     return true;
 }
 
+bool FTheFolderQuarantine::PlanDeleteFromQuarantine(const FString& Folder, FString& OutReport, FString& OutError)
+{
+    FString Clean = Folder;
+    Clean.RemoveFromEnd(TEXT("/"));
+    if(!RefuseUnlessInsideQuarantine(Clean, OutError))
+    {
+        return false;
+    }
+    if(!IFileManager::Get().DirectoryExists(*GameFolderToDisk(Clean)))
+    {
+        OutError = FString::Printf(TEXT("%s does not exist on disk"), *Clean);
+        return false;
+    }
+
+    FString Origin;
+    const bool bHasOrigin = FFileHelper::LoadFileToString(Origin, *OriginMarkerPath(Clean));
+    Origin.TrimStartAndEndInline();
+
+    OutReport = FString::Printf(TEXT("PLAN: delete %s from disk (%d asset(s)) and drop its redirect%s.\nNothing under the quarantine root exists anywhere else - RestoreFromQuarantine first if any of it is still wanted."),
+        *Clean,
+        PackagesUnder(Clean),
+        bHasOrigin && !Origin.IsEmpty() ? *FString::Printf(TEXT(" back to %s"), *Origin) : TEXT(" (no .origin marker: no redirect to drop)"));
+    return true;
+}
+
 bool FTheFolderQuarantine::DeleteFromQuarantine(const FString& Folder, FString& OutReport, FString& OutError)
 {
     FString Clean = Folder;
     Clean.RemoveFromEnd(TEXT("/"));
     if(!RefuseUnlessInsideQuarantine(Clean, OutError))
     {
+        return false;
+    }
+
+    if(!IFileManager::Get().DirectoryExists(*GameFolderToDisk(Clean)))
+    {
+        OutError = FString::Printf(TEXT("%s does not exist on disk - nothing was deleted"), *Clean);
         return false;
     }
 
@@ -423,6 +494,11 @@ bool FTheFolderQuarantine::VerifyQuarantineDeleted(const FString& Folder, FStrin
     Clean.RemoveFromEnd(TEXT("/"));
     if(!RefuseUnlessInsideQuarantine(Clean, OutError))
     {
+        return false;
+    }
+    if(!IFileManager::Get().DirectoryExists(*GameFolderToDisk(QuarantineRoot())))
+    {
+        OutError = FString::Printf(TEXT("cannot tell: the quarantine root %s does not exist on disk, so the absence of %s says nothing"), *QuarantineRoot(), *Clean);
         return false;
     }
     if(IFileManager::Get().DirectoryExists(*GameFolderToDisk(Clean)))
