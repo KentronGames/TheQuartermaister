@@ -167,6 +167,9 @@ struct FTheLintFindingReport
 
 /**
  * The structural state of a content library.
+ *
+ * The counts stay complete even when the findings list is cut: a truncated list that also truncated
+ * the totals would read as a cleaner project than it is.
  */
 USTRUCT(BlueprintType)
 struct FTheLintReport
@@ -466,10 +469,12 @@ public:
      * Deletes a quarantined folder for good.
      * This DESTROYS files. Call it only after explicit direction from the user, and only once the
      * project has been verified to work without the folder.
+     * Refuses while anything outside the quarantine still references the folder, naming what does.
      * @param Folder The parked folder, e.g. "/Game/SomePack".
+     * @param bForce Delete even then, accepting the dangling references it leaves behind.
      */
     UFUNCTION(meta = (AICallable), Category = "Quartermaster")
-    static FTheQuarantineReport DeleteQuarantinedFolder(const FString& Folder);
+    static FTheQuarantineReport DeleteQuarantinedFolder(const FString& Folder, bool bForce = false);
 
     /**
      * Checks that a folder really is parked: gone from the content tree, present under the

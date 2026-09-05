@@ -6,15 +6,17 @@
 
 #if WITH_DEV_AUTOMATION_TESTS
 
-#include "Asset/TheFolderQuarantine.h"
+    #include "Asset/TheFolderQuarantine.h"
 
-#include "AssetRegistry/AssetRegistryModule.h"
-#include "Engine/DataTable.h"
-#include "HAL/FileManager.h"
-#include "Misc/PackageName.h"
-#include "Misc/Paths.h"
-#include "UObject/Package.h"
-#include "UObject/SavePackage.h"
+    #include "AssetRegistry/AssetRegistryModule.h"
+    #include "Engine/DataTable.h"
+    #include "HAL/FileManager.h"
+    #include "Materials/Material.h"
+    #include "Materials/MaterialInstanceConstant.h"
+    #include "Misc/PackageName.h"
+    #include "Misc/Paths.h"
+    #include "UObject/Package.h"
+    #include "UObject/SavePackage.h"
 
 /**
  * Ground for the plugin's own tests. It lives in a header because the traps below are the kind a
@@ -65,6 +67,68 @@ inline bool MakeSavedAsset(const FString& PackagePath)
     return UPackage::SavePackage(Package, Asset, *Filename, Args);
 }
 
+/**
+ * A saved package that REFERENCES another asset, which a DataTable cannot do — the reference is the
+ * whole point when the subject is «who still points at this folder». A Material Instance carries one
+ * in a plain editor-only setter, and its parent is asked for without recaching a shader, so the
+ * fixture costs no shader compile.
+ *
+ * The scan at the end is load-bearing: AssetCreated announces the asset but does not read the saved
+ * file's DEPENDENCIES, so a reference question answered off an unscanned package finds nothing — which
+ * reads exactly like «this folder is safe to delete».
+ */
+inline bool MakeSavedReferencingAsset(const FString& PackagePath, class UMaterialInterface* Target)
+{
+    UPackage* Package = CreatePackage(*PackagePath);
+    if(!Package || !Target)
+    {
+        return false;
+    }
+    UMaterialInstanceConstant* Asset = NewObject<UMaterialInstanceConstant>(Package, UMaterialInstanceConstant::StaticClass(), *FPackageName::GetShortName(PackagePath), RF_Public | RF_Standalone);
+    if(!Asset)
+    {
+        return false;
+    }
+    Asset->SetParentEditorOnly(Target, /*RecacheShader*/ false);
+    FAssetRegistryModule::AssetCreated(Asset);
+    Package->MarkPackageDirty();
+
+    FSavePackageArgs Args;
+    Args.TopLevelFlags = RF_Public | RF_Standalone;
+    Args.SaveFlags = SAVE_NoError;
+    const FString Filename = FPackageName::LongPackageNameToFilename(PackagePath, FPackageName::GetAssetPackageExtension());
+    if(!UPackage::SavePackage(Package, Asset, *Filename, Args))
+    {
+        return false;
+    }
+
+    FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get().ScanFilesSynchronous({Filename}, /*bForceRescan*/ true);
+    return true;
+}
+
+/** A saved material, for when a test needs something a Material Instance can point at. */
+inline class UMaterial* MakeSavedMaterial(const FString& PackagePath)
+{
+    UPackage* Package = CreatePackage(*PackagePath);
+    if(!Package)
+    {
+        return nullptr;
+    }
+    UMaterial* Asset = NewObject<UMaterial>(Package, UMaterial::StaticClass(), *FPackageName::GetShortName(PackagePath), RF_Public | RF_Standalone);
+    if(!Asset)
+    {
+        return nullptr;
+    }
+    FAssetRegistryModule::AssetCreated(Asset);
+    Package->MarkPackageDirty();
+
+    FSavePackageArgs Args;
+    Args.TopLevelFlags = RF_Public | RF_Standalone;
+    Args.SaveFlags = SAVE_NoError;
+    const FString Filename = FPackageName::LongPackageNameToFilename(PackagePath, FPackageName::GetAssetPackageExtension());
+    return UPackage::SavePackage(Package, Asset, *Filename, Args) ? Asset : nullptr;
+}
+
 inline void RemoveFolderFromDisk(const FString& GameFolder)
 {
     IFileManager::Get().DeleteDirectory(*DiskPathOf(GameFolder), /*RequireExists*/ false, /*Tree*/ true);
@@ -92,7 +156,7 @@ inline void ReleaseTestRoot()
     if(FTheFolderQuarantine::MoveToQuarantine(TestRoot, Report, bNeedsRestart, Error))
     {
         const FString Parked = FTheFolderQuarantine::QuarantineRoot() / FPaths::GetCleanFilename(FString(TestRoot));
-        if(FTheFolderQuarantine::DeleteFromQuarantine(Parked, Report, Error))
+        if(FTheFolderQuarantine::DeleteFromQuarantine(Parked, /*bForce*/ false, Report, Error))
         {
             return;
         }

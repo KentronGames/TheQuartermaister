@@ -14,10 +14,6 @@
 
 namespace TheQuartermasterToolset
 {
-/**
- * The taxonomy every placement tool answers from. A failure here is raised rather than returned:
- * an answer computed without the project's own rules would be indistinguishable from a real one.
- */
 bool LoadPlacement(FThePlacementResolver& OutResolver)
 {
     FString Error;
@@ -34,8 +30,7 @@ bool LoadLint(FTheLintConfig& OutConfig)
     const FString ConfigPath = UTheQuartermasterSettings::ResolvedPlacementConfigPath();
     if(ConfigPath.IsEmpty())
     {
-        UKismetSystemLibrary::RaiseScriptError(
-            TEXT("no taxonomy: set PlacementConfigPath in the project's Editor settings"));
+        UKismetSystemLibrary::RaiseScriptError(TEXT("no taxonomy: set PlacementConfigPath in the project's Editor settings"));
         return false;
     }
 
@@ -48,7 +43,6 @@ bool LoadLint(FTheLintConfig& OutConfig)
     return false;
 }
 
-/** "name=value" entries into facts. A malformed entry is refused, not skipped. */
 bool ParseFacts(const TArray<FString>& Entries, TMap<FString, FString>& OutValues)
 {
     for(const FString& Entry : Entries)
@@ -57,8 +51,7 @@ bool ParseFacts(const TArray<FString>& Entries, TMap<FString, FString>& OutValue
         FString Value;
         if(!Entry.Split(TEXT("="), &Key, &Value) || Key.TrimStartAndEnd().IsEmpty())
         {
-            UKismetSystemLibrary::RaiseScriptError(
-                FString::Printf(TEXT("fact '%s' is not in the form name=value"), *Entry));
+            UKismetSystemLibrary::RaiseScriptError(FString::Printf(TEXT("fact '%s' is not in the form name=value"), *Entry));
             return false;
         }
         OutValues.Add(Key.TrimStartAndEnd(), Value.TrimStartAndEnd());
@@ -132,15 +125,15 @@ FThePlacementAnswer UTheQuartermasterToolset::PlaceAsset(const FString& AssetNam
 
     switch(Result.Outcome)
     {
-    case EThePlacementOutcome::Placed:
-        Answer.Outcome = TEXT("placed");
-        break;
-    case EThePlacementOutcome::NeedsFacts:
-        Answer.Outcome = TEXT("needs-facts");
-        break;
-    default:
-        Answer.Outcome = TEXT("rejected");
-        break;
+        case EThePlacementOutcome::Placed:
+            Answer.Outcome = TEXT("placed");
+            break;
+        case EThePlacementOutcome::NeedsFacts:
+            Answer.Outcome = TEXT("needs-facts");
+            break;
+        default:
+            Answer.Outcome = TEXT("rejected");
+            break;
     }
     return Answer;
 }
@@ -168,15 +161,15 @@ FThePathAccount UTheQuartermasterToolset::ExplainPath(const FString& PackagePath
 
     switch(Explanation.Outcome)
     {
-    case ETheExplanationOutcome::Matched:
-        Account.Outcome = TEXT("matched");
-        break;
-    case ETheExplanationOutcome::Ambiguous:
-        Account.Outcome = TEXT("ambiguous");
-        break;
-    default:
-        Account.Outcome = TEXT("unmatched");
-        break;
+        case ETheExplanationOutcome::Matched:
+            Account.Outcome = TEXT("matched");
+            break;
+        case ETheExplanationOutcome::Ambiguous:
+            Account.Outcome = TEXT("ambiguous");
+            break;
+        default:
+            Account.Outcome = TEXT("unmatched");
+            break;
     }
     return Account;
 }
@@ -199,8 +192,6 @@ FTheLintReport UTheQuartermasterToolset::LintStructure(int32 MaxFindings)
         return Report;
     }
 
-    // The counts stay complete even when the list is cut: a truncated list that also truncated the
-    // totals would read as a cleaner project than it is.
     Report.PackagesChecked = Result.PackagesChecked;
     Report.Errors = Result.CountOf(ETheLintSeverity::Error);
     Report.Warnings = Result.CountOf(ETheLintSeverity::Warning);
@@ -354,11 +345,11 @@ FTheQuarantineReport UTheQuartermasterToolset::RestoreQuarantinedFolder(const FS
     return TheQuartermasterToolset::Report(Text, bNeedsRestart);
 }
 
-FTheQuarantineReport UTheQuartermasterToolset::DeleteQuarantinedFolder(const FString& Folder)
+FTheQuarantineReport UTheQuartermasterToolset::DeleteQuarantinedFolder(const FString& Folder, bool bForce)
 {
     FString Text;
     FString Error;
-    if(!FTheFolderQuarantine::DeleteFromQuarantine(Folder, Text, Error))
+    if(!FTheFolderQuarantine::DeleteFromQuarantine(Folder, bForce, Text, Error))
     {
         UKismetSystemLibrary::RaiseScriptError(Error);
         return FTheQuarantineReport();

@@ -73,6 +73,21 @@ int32 PackagesUnder(const FString& Folder)
     return Assets.Num();
 }
 
+FString DescribeReferencers(const TArray<FString>& Referencers)
+{
+    const int32 Shown = FMath::Min(Referencers.Num(), 10);
+    FString List;
+    for(int32 RefNdx = 0; RefNdx < Shown; ++RefNdx)
+    {
+        List += FString::Printf(TEXT("\n  %s"), *Referencers[RefNdx]);
+    }
+    if(Referencers.Num() > Shown)
+    {
+        List += FString::Printf(TEXT("\n  ...and %d more"), Referencers.Num() - Shown);
+    }
+    return List;
+}
+
 bool UnloadAndCollect(const FString& Folder)
 {
     TArray<UPackage*> ToUnload;
@@ -182,7 +197,8 @@ bool FTheFolderQuarantine::PlanMoveToQuarantine(const FString& SourceFolder, FSt
         return false;
     }
 
-    OutReport = FString::Printf(TEXT("PLAN: move %s -> %s (%d asset(s)), add the redirect %s/ -> %s/, write the .origin marker.\nQuarantine is a transient state kept out of version control: once moved, %s exists only on this machine until RestoreFromQuarantine brings it back."),
+    OutReport = FString::Printf(
+        TEXT("PLAN: move %s -> %s (%d asset(s)), add the redirect %s/ -> %s/, write the .origin marker.\nQuarantine is a transient state kept out of version control: once moved, %s exists only on this machine until RestoreFromQuarantine brings it back."),
         *Folder,
         *Target,
         PackagesUnder(Folder),
@@ -275,14 +291,49 @@ bool FTheFolderQuarantine::PlanDeleteFromQuarantine(const FString& Folder, FStri
     const bool bHasOrigin = FFileHelper::LoadFileToString(Origin, *OriginMarkerPath(Clean));
     Origin.TrimStartAndEndInline();
 
-    OutReport = FString::Printf(TEXT("PLAN: delete %s from disk (%d asset(s)) and drop its redirect%s.\nNothing under the quarantine root exists anywhere else - RestoreFromQuarantine first if any of it is still wanted."),
+    const TArray<FString> Referencers = FTheFolderQuarantine::ExternalReferencersOf(Clean);
+
+    OutReport = FString::Printf(TEXT("PLAN: delete %s from disk (%d asset(s)) and drop its redirect%s.\nNothing under the quarantine root exists anywhere else - RestoreFromQuarantine first if any of it is still wanted.%s"),
         *Clean,
         PackagesUnder(Clean),
-        bHasOrigin && !Origin.IsEmpty() ? *FString::Printf(TEXT(" back to %s"), *Origin) : TEXT(" (no .origin marker: no redirect to drop)"));
+        bHasOrigin && !Origin.IsEmpty() ? *FString::Printf(TEXT(" back to %s"), *Origin) : TEXT(" (no .origin marker: no redirect to drop)"),
+        Referencers.IsEmpty() ? TEXT("\nNothing outside the quarantine references it.")
+                              : *FString::Printf(TEXT("\nREFUSED without bForce - %d package(s) outside the quarantine still reference it:%s"), Referencers.Num(), *DescribeReferencers(Referencers)));
     return true;
 }
 
-bool FTheFolderQuarantine::DeleteFromQuarantine(const FString& Folder, FString& OutReport, FString& OutError)
+TArray<FString> FTheFolderQuarantine::ExternalReferencersOf(const FString& Folder)
+{
+    FString Clean = Folder;
+    Clean.RemoveFromEnd(TEXT("/"));
+
+    IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+    TArray<FAssetData> Assets;
+    Registry.GetAssetsByPath(FName(*Clean), Assets, /*bRecursive*/ true);
+
+    const FString QuarantinePrefix = QuarantineRoot() + TEXT("/");
+    TSet<FString> Outside;
+    for(const FAssetData& Asset : Assets)
+    {
+        TArray<FName> Referencers;
+        Registry.GetReferencers(Asset.PackageName, Referencers);
+        for(const FName Referencer : Referencers)
+        {
+            const FString Package = Referencer.ToString();
+            if(Package.StartsWith(QuarantinePrefix))
+            {
+                continue;
+            }
+            Outside.Add(Package);
+        }
+    }
+
+    TArray<FString> Sorted = Outside.Array();
+    Sorted.Sort();
+    return Sorted;
+}
+
+bool FTheFolderQuarantine::DeleteFromQuarantine(const FString& Folder, bool bForce, FString& OutReport, FString& OutError)
 {
     FString Clean = Folder;
     Clean.RemoveFromEnd(TEXT("/"));
@@ -295,6 +346,20 @@ bool FTheFolderQuarantine::DeleteFromQuarantine(const FString& Folder, FString& 
     {
         OutError = FString::Printf(TEXT("%s does not exist on disk - nothing was deleted"), *Clean);
         return false;
+    }
+
+    if(!bForce)
+    {
+        const TArray<FString> Referencers = ExternalReferencersOf(Clean);
+        if(!Referencers.IsEmpty())
+        {
+            OutError = FString::Printf(
+                TEXT("refused to delete %s - %d package(s) outside the quarantine still reference it, and deleting it would leave them pointing at nothing:%s\nRestoreFromQuarantine it, repoint those packages, or pass bForce to delete anyway"),
+                *Clean,
+                Referencers.Num(),
+                *DescribeReferencers(Referencers));
+            return false;
+        }
     }
 
     FString Origin;

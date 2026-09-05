@@ -12,7 +12,6 @@
 
 namespace
 {
-/** One marker shape for every operation, so a lane can grep for the verdict instead of parsing prose. */
 void ReportSuccess(const TCHAR* Operation, const FString& Subject, const FString& Report)
 {
     UE_LOG(LogTheQuartermaster, Display, TEXT("THEQM_OK op=%s subject=%s"), Operation, *Subject);
@@ -28,11 +27,6 @@ int32 ReportFailure(const TCHAR* Operation, const FString& Subject, const FStrin
     return 2;
 }
 
-/**
- * The taxonomy for a placement operation: the project setting, or -Config= when a lane is checking
- * a file the project has not adopted yet. Both entry points read the same setting, so a lane and an
- * in-editor caller cannot silently be answering from two different taxonomies.
- */
 bool LoadPlacement(const TMap<FString, FString>& Arguments, FThePlacementResolver& OutResolver, FString& OutError)
 {
     if(const FString* ConfigPath = Arguments.Find(TEXT("Config")))
@@ -78,8 +72,6 @@ int32 UTheQuartermasterCommandlet::Main(const FString& Params)
             return ReportFailure(TEXT("quarantine"), *Folder, Error);
         }
         ReportSuccess(TEXT("quarantine"), *Folder, Report);
-        // Surfaced rather than treated as failure: the move completed, but a package the editor
-        // still held means this process's view of the world is stale.
         if(bNeedsRestart)
         {
             UE_LOG(LogTheQuartermaster, Warning, TEXT("THEQM_NEEDS_RESTART op=quarantine subject=%s"), **Folder);
@@ -103,7 +95,7 @@ int32 UTheQuartermasterCommandlet::Main(const FString& Params)
 
     if(const FString* Folder = Arguments.Find(TEXT("DeleteQuarantined")))
     {
-        if(!FTheFolderQuarantine::DeleteFromQuarantine(*Folder, Report, Error))
+        if(!FTheFolderQuarantine::DeleteFromQuarantine(*Folder, Switches.Contains(TEXT("Force")), Report, Error))
         {
             return ReportFailure(TEXT("delete"), *Folder, Error);
         }
@@ -123,8 +115,6 @@ int32 UTheQuartermasterCommandlet::Main(const FString& Params)
 
     if(Switches.Contains(TEXT("Lint")))
     {
-        // The lint block lives in the same taxonomy file as the placement rules, so it answers from
-        // the same setting; -Config= stays for a lane checking a file the project has not adopted.
         FString ConfigPath;
         if(const FString* Explicit = Arguments.Find(TEXT("Config")))
         {
@@ -136,8 +126,7 @@ int32 UTheQuartermasterCommandlet::Main(const FString& Params)
         }
         if(ConfigPath.IsEmpty())
         {
-            return ReportFailure(TEXT("lint"), TEXT("/Game"),
-                TEXT("no taxonomy: pass -Config=<file> or set PlacementConfigPath in the project's Editor settings"));
+            return ReportFailure(TEXT("lint"), TEXT("/Game"), TEXT("no taxonomy: pass -Config=<file> or set PlacementConfigPath in the project's Editor settings"));
         }
 
         FTheLintConfig Config;
@@ -156,30 +145,23 @@ int32 UTheQuartermasterCommandlet::Main(const FString& Params)
         {
             if(Finding.Severity == ETheLintSeverity::Error)
             {
-                UE_LOG(LogTheQuartermaster, Error, TEXT("THEQM_LINT_FINDING severity=error rule=%s package=%s detail=%s"),
-                    *Finding.Rule, *Finding.Package, *Finding.Detail);
+                UE_LOG(LogTheQuartermaster, Error, TEXT("THEQM_LINT_FINDING severity=error rule=%s package=%s detail=%s"), *Finding.Rule, *Finding.Package, *Finding.Detail);
             }
             else
             {
-                UE_LOG(LogTheQuartermaster, Warning, TEXT("THEQM_LINT_FINDING severity=warning rule=%s package=%s detail=%s"),
-                    *Finding.Rule, *Finding.Package, *Finding.Detail);
+                UE_LOG(LogTheQuartermaster, Warning, TEXT("THEQM_LINT_FINDING severity=warning rule=%s package=%s detail=%s"), *Finding.Rule, *Finding.Package, *Finding.Detail);
             }
         }
 
         const int32 Errors = Result.CountOf(ETheLintSeverity::Error);
         const int32 Warnings = Result.CountOf(ETheLintSeverity::Warning);
 
-        // Fail-closed on the rules the project enforces. A warning rule is still reported on every
-        // run and counted in the marker, so lowering severity records a decision instead of hiding
-        // one - the config says which rules the project has chosen to live with.
         if(Errors > 0)
         {
-            UE_LOG(LogTheQuartermaster, Error, TEXT("THEQM_FAIL op=lint subject=%s error=%d structural error(s), %d warning(s) over %d packages"),
-                *ConfigPath, Errors, Warnings, Result.PackagesChecked);
+            UE_LOG(LogTheQuartermaster, Error, TEXT("THEQM_FAIL op=lint subject=%s error=%d structural error(s), %d warning(s) over %d packages"), *ConfigPath, Errors, Warnings, Result.PackagesChecked);
             return 3;
         }
-        ReportSuccess(TEXT("lint"), ConfigPath,
-            FString::Printf(TEXT("checked=%d errors=0 warnings=%d"), Result.PackagesChecked, Warnings));
+        ReportSuccess(TEXT("lint"), ConfigPath, FString::Printf(TEXT("checked=%d errors=0 warnings=%d"), Result.PackagesChecked, Warnings));
         return 0;
     }
 
@@ -206,16 +188,13 @@ int32 UTheQuartermasterCommandlet::Main(const FString& Params)
         {
             return ReportFailure(TEXT("partition"), TEXT("/Game"), Error);
         }
-        ReportSuccess(TEXT("partition"), TEXT("/Game"), FString::Printf(TEXT("roots=%d packages=%d external_actors=%d"),
-            Result.Roots.Num(), Result.TotalPackages, Result.TotalExternalActors));
+        ReportSuccess(TEXT("partition"), TEXT("/Game"), FString::Printf(TEXT("roots=%d packages=%d external_actors=%d"), Result.Roots.Num(), Result.TotalPackages, Result.TotalExternalActors));
         return 0;
     }
 
     if(const FString* Roots = Arguments.Find(TEXT("Closure")))
     {
         const FString* Out = Arguments.Find(TEXT("Out"));
-        // No default output path on purpose. A guessed location is how a planning artifact ends up
-        // somewhere a project clean deletes it, and this run is expensive enough to be worth naming.
         if(!Out || Out->IsEmpty())
         {
             return ReportFailure(TEXT("closure"), *Roots, TEXT("-Out=<file> is required"));
@@ -233,8 +212,7 @@ int32 UTheQuartermasterCommandlet::Main(const FString& Params)
         {
             return ReportFailure(TEXT("closure"), *Roots, Error);
         }
-        ReportSuccess(TEXT("closure"), *Roots, FString::Printf(TEXT("candidates=%d safe=%d held=%d rounds=%d"),
-            Result.Candidates.Num(), Result.Safe.Num(), Result.Held.Num(), Result.FixpointRounds));
+        ReportSuccess(TEXT("closure"), *Roots, FString::Printf(TEXT("candidates=%d safe=%d held=%d rounds=%d"), Result.Candidates.Num(), Result.Safe.Num(), Result.Held.Num(), Result.FixpointRounds));
         return 0;
     }
 
@@ -247,17 +225,18 @@ int32 UTheQuartermasterCommandlet::Main(const FString& Params)
         }
 
         const FThePlacementStructure Structure = Resolver.Describe();
-        UE_LOG(LogTheQuartermaster, Display, TEXT("THEQM_STRUCTURE content_root=%s contexts=%d prefixes=%d rules=%d"),
-            *Structure.ContentRoot, Structure.Contexts.Num(), Structure.PrefixKinds.Num(), Structure.Rules.Num());
+        UE_LOG(LogTheQuartermaster, Display, TEXT("THEQM_STRUCTURE content_root=%s contexts=%d prefixes=%d rules=%d"), *Structure.ContentRoot, Structure.Contexts.Num(), Structure.PrefixKinds.Num(), Structure.Rules.Num());
         for(const FThePlacementRuleInfo& Rule : Structure.Rules)
         {
-            UE_LOG(LogTheQuartermaster, Display, TEXT("THEQM_RULE context=%s folder=%s requires=%s prefix=%s"),
-                *Rule.Context, *Rule.FolderTemplate,
+            UE_LOG(LogTheQuartermaster,
+                Display,
+                TEXT("THEQM_RULE context=%s folder=%s requires=%s prefix=%s"),
+                *Rule.Context,
+                *Rule.FolderTemplate,
                 Rule.Requires.IsEmpty() ? TEXT("-") : *FString::Join(Rule.Requires, TEXT(",")),
                 Rule.bRequiresPrefix ? TEXT("required") : TEXT("none"));
         }
-        ReportSuccess(TEXT("describe"), *Structure.ContentRoot,
-            FString::Printf(TEXT("contexts=%d rules=%d"), Structure.Contexts.Num(), Structure.Rules.Num()));
+        ReportSuccess(TEXT("describe"), *Structure.ContentRoot, FString::Printf(TEXT("contexts=%d rules=%d"), Structure.Contexts.Num(), Structure.Rules.Num()));
         return 0;
     }
 
@@ -270,27 +249,29 @@ int32 UTheQuartermasterCommandlet::Main(const FString& Params)
         }
 
         const FThePathExplanation Explanation = Resolver.Explain(*PackagePath);
-        // Unmatched is a finding about the content, not a failure of the tool, so it reports as a
-        // verdict rather than an error exit: a lane sweeping a library expects to collect these.
         switch(Explanation.Outcome)
         {
-        case ETheExplanationOutcome::Matched:
-            ReportSuccess(TEXT("explain"), *PackagePath, FString::Printf(TEXT("context=%s template=%s prefix=%s kind=%s facts=%s"),
-                *Explanation.Context, *Explanation.FolderTemplate,
-                Explanation.Prefix.IsEmpty() ? TEXT("-") : *Explanation.Prefix,
-                Explanation.Kind.IsEmpty() ? TEXT("-") : *Explanation.Kind,
-                *JoinFacts(Explanation.Facts)));
-            return 0;
-        case ETheExplanationOutcome::Ambiguous:
-            UE_LOG(LogTheQuartermaster, Warning, TEXT("THEQM_EXPLAIN_AMBIGUOUS subject=%s contexts=%s"),
-                **PackagePath, *FString::Join(Explanation.CandidateContexts, TEXT(",")));
-            return 4;
-        default:
-            UE_LOG(LogTheQuartermaster, Warning, TEXT("THEQM_EXPLAIN_UNMATCHED subject=%s near=%s error=%s"),
-                **PackagePath,
-                Explanation.CandidateContexts.IsEmpty() ? TEXT("-") : *FString::Join(Explanation.CandidateContexts, TEXT(",")),
-                *Explanation.Error);
-            return 4;
+            case ETheExplanationOutcome::Matched:
+                ReportSuccess(TEXT("explain"),
+                    *PackagePath,
+                    FString::Printf(TEXT("context=%s template=%s prefix=%s kind=%s facts=%s"),
+                        *Explanation.Context,
+                        *Explanation.FolderTemplate,
+                        Explanation.Prefix.IsEmpty() ? TEXT("-") : *Explanation.Prefix,
+                        Explanation.Kind.IsEmpty() ? TEXT("-") : *Explanation.Kind,
+                        *JoinFacts(Explanation.Facts)));
+                return 0;
+            case ETheExplanationOutcome::Ambiguous:
+                UE_LOG(LogTheQuartermaster, Warning, TEXT("THEQM_EXPLAIN_AMBIGUOUS subject=%s contexts=%s"), **PackagePath, *FString::Join(Explanation.CandidateContexts, TEXT(",")));
+                return 4;
+            default:
+                UE_LOG(LogTheQuartermaster,
+                    Warning,
+                    TEXT("THEQM_EXPLAIN_UNMATCHED subject=%s near=%s error=%s"),
+                    **PackagePath,
+                    Explanation.CandidateContexts.IsEmpty() ? TEXT("-") : *FString::Join(Explanation.CandidateContexts, TEXT(",")),
+                    *Explanation.Error);
+                return 4;
         }
     }
 
@@ -327,15 +308,14 @@ int32 UTheQuartermasterCommandlet::Main(const FString& Params)
         const FThePlacementResult Result = Resolver.Resolve(Facts);
         switch(Result.Outcome)
         {
-        case EThePlacementOutcome::Placed:
-            ReportSuccess(TEXT("place"), *Name, FString::Printf(TEXT("path=%s folder=%s"), *Result.PackagePath, *Result.Folder));
-            return 0;
-        case EThePlacementOutcome::NeedsFacts:
-            UE_LOG(LogTheQuartermaster, Warning, TEXT("THEQM_PLACE_NEEDS_FACTS subject=%s missing=%s"),
-                **Name, *FString::Join(Result.MissingFacts, TEXT(",")));
-            return 4;
-        default:
-            return ReportFailure(TEXT("place"), *Name, Result.Error);
+            case EThePlacementOutcome::Placed:
+                ReportSuccess(TEXT("place"), *Name, FString::Printf(TEXT("path=%s folder=%s"), *Result.PackagePath, *Result.Folder));
+                return 0;
+            case EThePlacementOutcome::NeedsFacts:
+                UE_LOG(LogTheQuartermaster, Warning, TEXT("THEQM_PLACE_NEEDS_FACTS subject=%s missing=%s"), **Name, *FString::Join(Result.MissingFacts, TEXT(",")));
+                return 4;
+            default:
+                return ReportFailure(TEXT("place"), *Name, Result.Error);
         }
     }
 

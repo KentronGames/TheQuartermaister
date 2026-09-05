@@ -38,11 +38,23 @@ public:
      * Removes a parked folder for good. Refuses a folder that is not on disk: a delete that reports
      * success for a path that never existed makes a mistyped path indistinguishable from a real
      * removal, and the caller then believes a pack is gone that is still sitting under its own name.
+     *
+     * Also refuses while anything OUTSIDE the quarantine still references the folder, naming what does.
+     * Quarantined content is not supposed to be referenced, but a project that harvested one asset out
+     * of a parked pack breaks that assumption silently: the delete succeeds and leaves the referencing
+     * package pointing at nothing. bForce deletes anyway, for when the dangling reference is the
+     * intended outcome.
      */
-    static bool DeleteFromQuarantine(const FString& Folder, FString& OutReport, FString& OutError);
+    static bool DeleteFromQuarantine(const FString& Folder, bool bForce, FString& OutReport, FString& OutError);
 
-    /** What DeleteFromQuarantine would remove, writing nothing. */
+    /** What DeleteFromQuarantine would remove, writing nothing — including who still references it. */
     static bool PlanDeleteFromQuarantine(const FString& Folder, FString& OutReport, FString& OutError);
+
+    /**
+     * Packages outside the quarantine root that reference something under Folder, sorted. Empty means
+     * the folder can be deleted without leaving a dangling import behind.
+     */
+    static TArray<FString> ExternalReferencersOf(const FString& Folder);
 
     static bool RestoreFromQuarantine(const FString& Folder, FString& OutReport, bool& OutNeedsRestart, FString& OutError);
 

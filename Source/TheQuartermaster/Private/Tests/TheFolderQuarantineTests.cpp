@@ -4,13 +4,13 @@
 
 #if WITH_DEV_AUTOMATION_TESTS
 
-#include "Tests/TheQuartermasterTestFixtures.h"
+    #include "Tests/TheQuartermasterTestFixtures.h"
 
-#include "Asset/TheFolderQuarantine.h"
-#include "TheQuartermasterSettings.h"
+    #include "Asset/TheFolderQuarantine.h"
+    #include "TheQuartermasterSettings.h"
 
-#include "HAL/FileManager.h"
-#include "Misc/PackageName.h"
+    #include "HAL/FileManager.h"
+    #include "Misc/PackageName.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTheQuartermasterQuarantineRoundTripTest, "TheQuartermaster.Quarantine.MoveVerifyRestore", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FTheQuartermasterQuarantineRoundTripTest::RunTest(const FString& Parameters)
@@ -83,9 +83,62 @@ bool FTheQuartermasterQuarantineDeleteTest::RunTest(const FString& Parameters)
     }
     TestFalse(TEXT("VerifyQuarantineDeleted refuses while the folder is still there"), FTheFolderQuarantine::VerifyQuarantineDeleted(Parked, Report, Error));
 
-    TestTrue(FString::Printf(TEXT("DeleteFromQuarantine succeeded: %s"), *Error), FTheFolderQuarantine::DeleteFromQuarantine(Parked, Report, Error));
+    TestTrue(FString::Printf(TEXT("DeleteFromQuarantine succeeded: %s"), *Error), FTheFolderQuarantine::DeleteFromQuarantine(Parked, /*bForce*/ false, Report, Error));
     TestTrue(FString::Printf(TEXT("VerifyQuarantineDeleted passes: %s"), *Error), FTheFolderQuarantine::VerifyQuarantineDeleted(Parked, Report, Error));
 
+    ReleaseTestRoot();
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTheQuartermasterQuarantineReferencedDeleteTest, "TheQuartermaster.Quarantine.DeleteRefusesWhileSomethingOutsideStillPointsAtIt", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FTheQuartermasterQuarantineReferencedDeleteTest::RunTest(const FString& Parameters)
+{
+    using namespace TheQuartermasterTests;
+
+    const FString Pack = FString(TestRoot) / TEXT("ReferencedPack");
+    const FString Parked = FTheFolderQuarantine::QuarantineRoot() / TEXT("ReferencedPack");
+    const FString UserPackage = FString(TestRoot) / TEXT("Harvested") / TEXT("MI_Harvested");
+
+    RemoveFolderFromDisk(Parked);
+    RemoveFolderFromDisk(Pack);
+    RemoveFolderFromDisk(FString(TestRoot) / TEXT("Harvested"));
+
+    if(!TestTrue(TEXT("fixture material saved"), MakeSavedMaterial(Pack / TEXT("M_Referenced")) != nullptr))
+    {
+        return false;
+    }
+
+    FString Report;
+    FString Error;
+    bool bNeedsRestart = false;
+    if(!TestTrue(FString::Printf(TEXT("MoveToQuarantine succeeded: %s"), *Error), FTheFolderQuarantine::MoveToQuarantine(Pack, Report, bNeedsRestart, Error)))
+    {
+        return false;
+    }
+
+    UMaterialInterface* const ParkedMaterial = LoadObject<UMaterialInterface>(nullptr, *(Parked / TEXT("M_Referenced.M_Referenced")));
+    if(!TestTrue(TEXT("the parked material loads from its quarantine path"), ParkedMaterial != nullptr))
+    {
+        ReleaseTestRoot();
+        return false;
+    }
+
+    if(!TestTrue(TEXT("a package outside the quarantine now references the parked one"), MakeSavedReferencingAsset(UserPackage, ParkedMaterial)))
+    {
+        ReleaseTestRoot();
+        return false;
+    }
+
+    const TArray<FString> Referencers = FTheFolderQuarantine::ExternalReferencersOf(Parked);
+    TestTrue(TEXT("the referencer is seen"), Referencers.Contains(UserPackage));
+
+    TestFalse(TEXT("DeleteFromQuarantine refuses while something outside still points at the folder"), FTheFolderQuarantine::DeleteFromQuarantine(Parked, /*bForce*/ false, Report, Error));
+    TestTrue(TEXT("the refusal names the referencer"), Error.Contains(UserPackage));
+
+    TestTrue(FString::Printf(TEXT("bForce deletes it anyway: %s"), *Error), FTheFolderQuarantine::DeleteFromQuarantine(Parked, /*bForce*/ true, Report, Error));
+    TestTrue(FString::Printf(TEXT("VerifyQuarantineDeleted passes: %s"), *Error), FTheFolderQuarantine::VerifyQuarantineDeleted(Parked, Report, Error));
+
+    RemoveFolderFromDisk(FString(TestRoot) / TEXT("Harvested"));
     ReleaseTestRoot();
     return true;
 }
@@ -101,7 +154,7 @@ bool FTheQuartermasterQuarantineAbsenceTest::RunTest(const FString& Parameters)
     FString Report;
     FString Error;
 
-    TestFalse(TEXT("DeleteFromQuarantine refuses a folder that is not on disk, instead of reading a mistyped path as a completed removal"), FTheFolderQuarantine::DeleteFromQuarantine(Missing, Report, Error));
+    TestFalse(TEXT("DeleteFromQuarantine refuses a folder that is not on disk, instead of reading a mistyped path as a completed removal"), FTheFolderQuarantine::DeleteFromQuarantine(Missing, /*bForce*/ false, Report, Error));
     TestTrue(TEXT("the refusal says the folder is not there"), Error.Contains(TEXT("does not exist")));
 
     TestFalse(TEXT("PlanDeleteFromQuarantine refuses it too"), FTheFolderQuarantine::PlanDeleteFromQuarantine(Missing, Report, Error));
@@ -143,7 +196,7 @@ bool FTheQuartermasterQuarantinePlanTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("a plan for the delete reads the parked folder"), FTheFolderQuarantine::PlanDeleteFromQuarantine(Parked, Plan, Error));
     TestTrue(TEXT("the delete plan wrote nothing either"), IFileManager::Get().DirectoryExists(*DiskPathOf(Parked)));
 
-    TestTrue(FString::Printf(TEXT("DeleteFromQuarantine succeeded: %s"), *Error), FTheFolderQuarantine::DeleteFromQuarantine(Parked, Report, Error));
+    TestTrue(FString::Printf(TEXT("DeleteFromQuarantine succeeded: %s"), *Error), FTheFolderQuarantine::DeleteFromQuarantine(Parked, /*bForce*/ false, Report, Error));
 
     ReleaseTestRoot();
     return true;
@@ -158,10 +211,10 @@ bool FTheQuartermasterQuarantineGuardTest::RunTest(const FString& Parameters)
 
     const FString Root = FTheFolderQuarantine::QuarantineRoot();
 
-    TestFalse(TEXT("deleting the quarantine root itself is refused by name: it would take every parked pack with it, and there is nothing to analyse at that point"), FTheFolderQuarantine::DeleteFromQuarantine(Root, Report, Error));
+    TestFalse(TEXT("deleting the quarantine root itself is refused by name: it would take every parked pack with it, and there is nothing to analyse at that point"), FTheFolderQuarantine::DeleteFromQuarantine(Root, /*bForce*/ false, Report, Error));
     TestTrue(TEXT("the refusal names the root"), Error.Contains(Root));
 
-    TestFalse(TEXT("deleting a path outside the root is refused"), FTheFolderQuarantine::DeleteFromQuarantine(TEXT("/Game/SomethingElse"), Report, Error));
+    TestFalse(TEXT("deleting a path outside the root is refused"), FTheFolderQuarantine::DeleteFromQuarantine(TEXT("/Game/SomethingElse"), /*bForce*/ false, Report, Error));
     TestFalse(TEXT("restoring a path outside the root is refused"), FTheFolderQuarantine::RestoreFromQuarantine(TEXT("/Game/SomethingElse"), Report, bNeedsRestart, Error));
     TestFalse(TEXT("quarantining a non-/Game path is refused"), FTheFolderQuarantine::MoveToQuarantine(TEXT("/Engine/Whatever"), Report, bNeedsRestart, Error));
     TestFalse(TEXT("quarantining something already in quarantine is refused"), FTheFolderQuarantine::MoveToQuarantine(Root / TEXT("Anything"), Report, bNeedsRestart, Error));
@@ -182,7 +235,9 @@ bool FTheQuartermasterSettingsRootTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("a trailing slash is stripped"), UTheQuartermasterSettings::ResolvedQuarantineRoot(), FString(TEXT("/Game/Parked")));
 
     Settings->QuarantineRoot = TEXT("/Game");
-    TestEqual(TEXT("/Game itself falls back to the default rather than failing - a bad setting must not strand folders already parked under the default root"), UTheQuartermasterSettings::ResolvedQuarantineRoot(), FString(UTheQuartermasterSettings::DefaultQuarantineRoot()));
+    TestEqual(TEXT("/Game itself falls back to the default rather than failing - a bad setting must not strand folders already parked under the default root"),
+        UTheQuartermasterSettings::ResolvedQuarantineRoot(),
+        FString(UTheQuartermasterSettings::DefaultQuarantineRoot()));
 
     Settings->QuarantineRoot = TEXT("D:/NotAPackagePath");
     TestEqual(TEXT("a non-/Game path falls back to the default"), UTheQuartermasterSettings::ResolvedQuarantineRoot(), FString(UTheQuartermasterSettings::DefaultQuarantineRoot()));
