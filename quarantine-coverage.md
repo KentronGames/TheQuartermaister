@@ -7,7 +7,7 @@ for "it is proven". Update it when coverage changes.
 
 | Behaviour | How |
 | --- | --- |
-| Move → verify → restore round trip | Automation test, and end to end on 33 real packages in OWH |
+| Move → verify → restore round trip | Automation test, and end to end on 33 real packages in a shipping project |
 | Byte identity across the round trip | 33/33 SHA-256 hashes identical; git reported no change to Content |
 | Redirect rebuilt after a restart | The live verify ran in a **fresh** editor process, so the redirect could only have come from the on-disk `.origin` marker |
 | Delete removes the folder | Automation test |
