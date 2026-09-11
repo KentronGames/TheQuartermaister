@@ -224,6 +224,10 @@ public:
      * of them would fork the pack from its source), a declared prefix of ANOTHER kind is replaced (a pack's
      * MF_ physics asset becomes PHYS_ - MF_ means Material Function here and nothing else), and a name with
      * no declared prefix gets this one in front. An empty or undeclared `Prefix` leaves the name alone.
+     *
+     * A declared prefix in another CASE is a declared prefix spelled the pack's way (`sm_Rock`, `mi_Rock`,
+     * `t_Rock_bc`): it is judged by its kind like any other and comes out in the config's spelling - `SM_Rock`
+     * - because the naming table, and the tree lint reading it, compare prefixes case-sensitively.
      */
     FString NameWithPrefix(const FString& Name, const FString& Prefix) const;
 
@@ -293,8 +297,11 @@ private:
         FString Why;
     };
 
-    /** Longest known prefix wins, so PHYS_ beats a shorter false match. Empty when none applies. */
+    /** The name's first token when the config declares it in exactly this case; empty otherwise. */
     FString ParsePrefix(const FString& Name) const;
+
+    /** The config's spelling of the name's first token when that token is declared in ANY case; empty otherwise. */
+    FString DeclaredPrefixIgnoringCase(const FString& Name) const;
 
     /**
      * Whether one rule accounts for these folder segments, filling OutFacts when it does.

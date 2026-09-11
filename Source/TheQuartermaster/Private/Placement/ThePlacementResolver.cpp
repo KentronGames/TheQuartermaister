@@ -306,7 +306,7 @@ FString FThePlacementResolver::RefusalByFacts(const FRule& Rule, const TMap<FStr
     return FString();
 }
 
-FString FThePlacementResolver::ParsePrefix(const FString& Name) const
+FString FThePlacementResolver::DeclaredPrefixIgnoringCase(const FString& Name) const
 {
     int32 Underscore = INDEX_NONE;
     if(!Name.FindChar(TEXT('_'), Underscore) || Underscore <= 0)
@@ -314,7 +314,20 @@ FString FThePlacementResolver::ParsePrefix(const FString& Name) const
         return FString();
     }
     const FString Candidate = Name.Left(Underscore);
-    return PrefixKinds.Contains(Candidate) ? Candidate : FString();
+    for(const TPair<FString, FString>& Declared : PrefixKinds)
+    {
+        if(Declared.Key.Equals(Candidate, ESearchCase::IgnoreCase))
+        {
+            return Declared.Key;
+        }
+    }
+    return FString();
+}
+
+FString FThePlacementResolver::ParsePrefix(const FString& Name) const
+{
+    const FString Declared = DeclaredPrefixIgnoringCase(Name);
+    return !Declared.IsEmpty() && Name.StartsWith(Declared + TEXT("_"), ESearchCase::CaseSensitive) ? Declared : FString();
 }
 
 FThePlacementResult FThePlacementResolver::Resolve(const FThePlacementFacts& Facts) const
@@ -524,16 +537,13 @@ FString FThePlacementResolver::NameWithPrefix(const FString& Name, const FString
     {
         return Name;
     }
-    const FString Current = ParsePrefix(Name);
+    const FString Current = DeclaredPrefixIgnoringCase(Name);
     if(Current.IsEmpty())
     {
         return Prefix + TEXT("_") + Name;
     }
-    if(PrefixKinds.FindChecked(Current).Equals(*Kind, ESearchCase::IgnoreCase))
-    {
-        return Name;
-    }
-    return Prefix + Name.Mid(Current.Len());
+    const FString Rest = Name.Mid(Current.Len());
+    return (PrefixKinds.FindChecked(Current).Equals(*Kind, ESearchCase::IgnoreCase) ? Current : Prefix) + Rest;
 }
 
 bool FThePlacementResolver::MatchTemplateSegments(const FRule& Rule, const TArray<FString>& Template, int32 TemplateAt, const TArray<FString>& Folder, int32 FolderAt, const FString& Sub, const FString& Kind, TMap<FString, FString>& OutFacts) const

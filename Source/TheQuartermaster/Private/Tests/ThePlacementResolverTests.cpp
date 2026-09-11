@@ -373,6 +373,11 @@ bool FThePlacementClassPrefixTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("an audio prefix on a mesh is replaced"), Resolver.NameWithPrefix(TEXT("S_Rock"), TEXT("SM")), FString(TEXT("SM_Rock")));
     TestEqual(TEXT("no prefix for the class leaves the name alone"), Resolver.NameWithPrefix(TEXT("Rock"), FString()), FString(TEXT("Rock")));
     TestEqual(TEXT("an undeclared prefix leaves the name alone rather than inventing one"), Resolver.NameWithPrefix(TEXT("Rock"), TEXT("XX")), FString(TEXT("Rock")));
+    TestEqualSensitive(TEXT("a pack's lower-case sm_ is our SM_ spelled its way - same kind, our spelling"), Resolver.NameWithPrefix(TEXT("sm_Rock_01_01"), TEXT("SM")), FString(TEXT("SM_Rock_01_01")));
+    TestEqualSensitive(TEXT("a lower-case mm_ keeps its kind and takes the config's case"), Resolver.NameWithPrefix(TEXT("mm_Run_Fwd"), TEXT("AS")), FString(TEXT("MM_Run_Fwd")));
+    TestEqualSensitive(TEXT("a lower-case prefix of another kind is replaced like any other"), Resolver.NameWithPrefix(TEXT("s_Rock"), TEXT("SM")), FString(TEXT("SM_Rock")));
+    TestNotEqual(TEXT("Explain does not read a lower-case sm_ as the SM_ the naming table declares"), static_cast<int32>(Resolver.Explain(TEXT("/Game/Assets/Nature/Rocks/sm_Rock_01_01")).Outcome), static_cast<int32>(ETheExplanationOutcome::Matched));
+    TestEqual(TEXT("while our own spelling of the same path is explained"), static_cast<int32>(Resolver.Explain(TEXT("/Game/Assets/Nature/Rocks/SM_Rock_01_01")).Outcome), static_cast<int32>(ETheExplanationOutcome::Matched));
     return true;
 }
 #endif
