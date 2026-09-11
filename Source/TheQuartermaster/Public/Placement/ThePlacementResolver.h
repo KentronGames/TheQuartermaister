@@ -131,6 +131,9 @@ struct FThePlacementStructure
     /** Top-level folders the taxonomy deliberately does not describe, e.g. _Tests, _Quarantine. */
     TArray<FString> TopLevelExceptions;
 
+    /** Asset class name -> the prefix an asset of that class carries, e.g. StaticMesh -> SM. */
+    TMap<FString, FString> ClassPrefixes;
+
     TArray<FThePlacementRuleInfo> Rules;
 };
 
@@ -204,6 +207,25 @@ public:
      * Case-insensitive, like the content browser: a test that writes to /Game/_tests lands in the same folder.
      */
     bool IsOutsideTaxonomy(const FString& PackagePath) const;
+
+    /**
+     * The prefix the config assigns to an asset class by its exact class name, e.g. StaticMesh -> SM. Empty
+     * when the config names none; a caller holding a UClass walks its parents and asks again, which is how a
+     * project data asset finds the DataAsset row without the config listing every subclass.
+     */
+    FString PrefixForClass(const FString& ClassName) const;
+
+    /**
+     * The name an asset carrying `Prefix` has here - the answer a transfer needs before it writes, because a
+     * copy keeps its source name and a bought pack names things its own way.
+     *
+     * Judged by KIND, not by the exact prefix, and that is the naming table's own rule: a prefix already
+     * declared for the same kind stays (an imported pack's MM_ sequences stay MM_, since renaming a hundred
+     * of them would fork the pack from its source), a declared prefix of ANOTHER kind is replaced (a pack's
+     * MF_ physics asset becomes PHYS_ - MF_ means Material Function here and nothing else), and a name with
+     * no declared prefix gets this one in front. An empty or undeclared `Prefix` leaves the name alone.
+     */
+    FString NameWithPrefix(const FString& Name, const FString& Prefix) const;
 
     const TArray<FString>& GetContexts() const { return Contexts; }
     const FString& GetContentRoot() const { return ContentRoot; }
@@ -311,4 +333,5 @@ private:
     TArray<FString> UnprefixedContexts;
     TArray<FRedirect> Redirects;
     TArray<FString> TopLevelExceptions;
+    TMap<FString, FString> ClassPrefixes;
 };

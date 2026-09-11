@@ -87,6 +87,7 @@ bool FThePlacementResolver::LoadConfigFromString(const FString& Json, FString& O
     Rules.Reset();
     UnprefixedContexts.Reset();
     TopLevelExceptions.Reset();
+    ClassPrefixes.Reset();
 
     Root->TryGetStringField(TEXT("content_root"), ContentRoot);
     ContentRoot.RemoveFromEnd(TEXT("/"));
@@ -97,6 +98,7 @@ bool FThePlacementResolver::LoadConfigFromString(const FString& Json, FString& O
 
     ReadStringMap(Root, TEXT("prefixes"), PrefixKinds);
     ReadStringMap(Root, TEXT("kind_directories"), KindDirectories);
+    ReadStringMap(Root, TEXT("class_prefixes"), ClassPrefixes);
     Root->TryGetStringArrayField(TEXT("contexts"), Contexts);
     Root->TryGetStringArrayField(TEXT("unprefixed_contexts"), UnprefixedContexts);
     const TSharedPtr<FJsonObject>* TopLevel = nullptr;
@@ -481,6 +483,7 @@ FThePlacementStructure FThePlacementResolver::Describe() const
     Structure.PrefixKinds = PrefixKinds;
     Structure.KindDirectories = KindDirectories;
     Structure.TopLevelExceptions = TopLevelExceptions;
+    Structure.ClassPrefixes = ClassPrefixes;
 
     Structure.Rules.Reserve(Rules.Num());
     for(const FRule& Rule : Rules)
@@ -506,6 +509,31 @@ bool FThePlacementResolver::IsOutsideTaxonomy(const FString& PackagePath) const
     FString First = Trimmed.RightChop(ContentRoot.Len() + 1);
     First.Split(TEXT("/"), &First, nullptr);
     return TopLevelExceptions.ContainsByPredicate([&First](const FString& Exception) { return Exception.Equals(First, ESearchCase::IgnoreCase); });
+}
+
+FString FThePlacementResolver::PrefixForClass(const FString& ClassName) const
+{
+    const FString* Prefix = ClassPrefixes.Find(ClassName);
+    return Prefix ? *Prefix : FString();
+}
+
+FString FThePlacementResolver::NameWithPrefix(const FString& Name, const FString& Prefix) const
+{
+    const FString* Kind = Prefix.IsEmpty() ? nullptr : PrefixKinds.Find(Prefix);
+    if(!Kind || Name.IsEmpty())
+    {
+        return Name;
+    }
+    const FString Current = ParsePrefix(Name);
+    if(Current.IsEmpty())
+    {
+        return Prefix + TEXT("_") + Name;
+    }
+    if(PrefixKinds.FindChecked(Current).Equals(*Kind, ESearchCase::IgnoreCase))
+    {
+        return Name;
+    }
+    return Prefix + Name.Mid(Current.Len());
 }
 
 bool FThePlacementResolver::MatchTemplateSegments(const FRule& Rule, const TArray<FString>& Template, int32 TemplateAt, const TArray<FString>& Folder, int32 FolderAt, const FString& Sub, const FString& Kind, TMap<FString, FString>& OutFacts) const

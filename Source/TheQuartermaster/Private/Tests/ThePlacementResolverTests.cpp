@@ -347,4 +347,32 @@ bool FThePlacementOutsideTaxonomyTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("Describe carries the exceptions"), Resolver.Describe().TopLevelExceptions.Num(), 2);
     return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThePlacementClassPrefixTest, "TheQuartermaster.Placement.ClassNamesItsPrefixByKind", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThePlacementClassPrefixTest::RunTest(const FString& Parameters)
+{
+    FThePlacementResolver Resolver;
+    FString Error;
+    const FString Json = TEXT("{\"content_root\":\"/Game\",")
+        TEXT("\"prefixes\":{\"SM\":\"mesh\",\"SK\":\"mesh\",\"AS\":\"anim\",\"MM\":\"anim\",\"MF\":\"material\",\"PHYS\":\"physics\",\"S\":\"audio\"},")
+        TEXT("\"class_prefixes\":{\"StaticMesh\":\"SM\",\"SkeletalMesh\":\"SK\",\"AnimSequence\":\"AS\",\"PhysicsAsset\":\"PHYS\"},")
+        TEXT("\"rules\":[{\"context\":\"library\",\"folder\":\"Assets/{category}/{entity}\",\"requires\":[\"category\",\"entity\"]}]}");
+    if(!TestTrue(FString::Printf(TEXT("the config loads: %s"), *Error), Resolver.LoadConfigFromString(Json, Error)))
+    {
+        return false;
+    }
+
+    TestEqual(TEXT("a class the config names answers its prefix"), Resolver.PrefixForClass(TEXT("StaticMesh")), FString(TEXT("SM")));
+    TestEqual(TEXT("a class it does not name answers nothing"), Resolver.PrefixForClass(TEXT("World")), FString());
+
+    TestEqual(TEXT("a vendor name with no declared prefix gets the class's"), Resolver.NameWithPrefix(TEXT("Cliff_01"), TEXT("SM")), FString(TEXT("SM_Cliff_01")));
+    TestEqual(TEXT("our own prefix stays"), Resolver.NameWithPrefix(TEXT("SM_Cliff01"), TEXT("SM")), FString(TEXT("SM_Cliff01")));
+    TestEqual(TEXT("a pack's MM_ sequence keeps its prefix - same kind"), Resolver.NameWithPrefix(TEXT("MM_Run_Fwd"), TEXT("AS")), FString(TEXT("MM_Run_Fwd")));
+    TestEqual(TEXT("a pack's MF_ physics asset is renamed - another kind"), Resolver.NameWithPrefix(TEXT("MF_Body"), TEXT("PHYS")), FString(TEXT("PHYS_Body")));
+    TestEqual(TEXT("a static-mesh prefix on a skeletal mesh stays - both are meshes"), Resolver.NameWithPrefix(TEXT("SM_Hero"), TEXT("SK")), FString(TEXT("SM_Hero")));
+    TestEqual(TEXT("an audio prefix on a mesh is replaced"), Resolver.NameWithPrefix(TEXT("S_Rock"), TEXT("SM")), FString(TEXT("SM_Rock")));
+    TestEqual(TEXT("no prefix for the class leaves the name alone"), Resolver.NameWithPrefix(TEXT("Rock"), FString()), FString(TEXT("Rock")));
+    TestEqual(TEXT("an undeclared prefix leaves the name alone rather than inventing one"), Resolver.NameWithPrefix(TEXT("Rock"), TEXT("XX")), FString(TEXT("Rock")));
+    return true;
+}
 #endif
