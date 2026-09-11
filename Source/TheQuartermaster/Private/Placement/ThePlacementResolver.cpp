@@ -86,6 +86,7 @@ bool FThePlacementResolver::LoadConfigFromString(const FString& Json, FString& O
     Contexts.Reset();
     Rules.Reset();
     UnprefixedContexts.Reset();
+    TopLevelExceptions.Reset();
 
     Root->TryGetStringField(TEXT("content_root"), ContentRoot);
     ContentRoot.RemoveFromEnd(TEXT("/"));
@@ -98,6 +99,11 @@ bool FThePlacementResolver::LoadConfigFromString(const FString& Json, FString& O
     ReadStringMap(Root, TEXT("kind_directories"), KindDirectories);
     Root->TryGetStringArrayField(TEXT("contexts"), Contexts);
     Root->TryGetStringArrayField(TEXT("unprefixed_contexts"), UnprefixedContexts);
+    const TSharedPtr<FJsonObject>* TopLevel = nullptr;
+    if(Root->TryGetObjectField(TEXT("top_level"), TopLevel))
+    {
+        (*TopLevel)->TryGetStringArrayField(TEXT("exceptions"), TopLevelExceptions);
+    }
 
     const TArray<TSharedPtr<FJsonValue>>* RuleValues = nullptr;
     if(!Root->TryGetArrayField(TEXT("rules"), RuleValues))
@@ -474,6 +480,7 @@ FThePlacementStructure FThePlacementResolver::Describe() const
     Structure.Contexts = Contexts;
     Structure.PrefixKinds = PrefixKinds;
     Structure.KindDirectories = KindDirectories;
+    Structure.TopLevelExceptions = TopLevelExceptions;
 
     Structure.Rules.Reserve(Rules.Num());
     for(const FRule& Rule : Rules)
@@ -486,6 +493,19 @@ FThePlacementStructure FThePlacementResolver::Describe() const
         Structure.Rules.Add(MoveTemp(Info));
     }
     return Structure;
+}
+
+bool FThePlacementResolver::IsOutsideTaxonomy(const FString& PackagePath) const
+{
+    FString Trimmed = PackagePath;
+    Trimmed.Split(TEXT("."), &Trimmed, nullptr);
+    if(!Trimmed.StartsWith(ContentRoot + TEXT("/"), ESearchCase::IgnoreCase))
+    {
+        return false;
+    }
+    FString First = Trimmed.RightChop(ContentRoot.Len() + 1);
+    First.Split(TEXT("/"), &First, nullptr);
+    return TopLevelExceptions.ContainsByPredicate([&First](const FString& Exception) { return Exception.Equals(First, ESearchCase::IgnoreCase); });
 }
 
 bool FThePlacementResolver::MatchTemplateSegments(const FRule& Rule, const TArray<FString>& Template, int32 TemplateAt, const TArray<FString>& Folder, int32 FolderAt, const FString& Sub, const FString& Kind, TMap<FString, FString>& OutFacts) const

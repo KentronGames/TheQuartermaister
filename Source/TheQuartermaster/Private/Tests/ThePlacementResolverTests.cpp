@@ -327,4 +327,24 @@ bool FThePlacementExplanationRefusalTest::RunTest(const FString& Parameters)
     return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThePlacementOutsideTaxonomyTest, "TheQuartermaster.Placement.TopLevelExceptionsAreOutsideTheTaxonomy", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThePlacementOutsideTaxonomyTest::RunTest(const FString& Parameters)
+{
+    FThePlacementResolver Resolver;
+    FString Error;
+    const FString Json = TEXT("{\"content_root\":\"/Game\",\"top_level\":{\"roots\":[\"Assets\"],\"exceptions\":[\"_Tests\",\"_Quarantine\"]},")
+        TEXT("\"prefixes\":{\"SM\":\"mesh\"},\"rules\":[{\"context\":\"library\",\"folder\":\"Assets/{category}/{entity}\",\"requires\":[\"category\",\"entity\"]}]}");
+    if(!TestTrue(FString::Printf(TEXT("the config loads: %s"), *Error), Resolver.LoadConfigFromString(Json, Error)))
+    {
+        return false;
+    }
+
+    TestTrue(TEXT("a package under an exception folder is outside the taxonomy"), Resolver.IsOutsideTaxonomy(TEXT("/Game/_Tests/TheMCP/BP_Probe")));
+    TestTrue(TEXT("the folder name is compared the way the content browser compares it"), Resolver.IsOutsideTaxonomy(TEXT("/Game/_tests/themcp/BP_Probe.BP_Probe")));
+    TestFalse(TEXT("a package under a described root is not"), Resolver.IsOutsideTaxonomy(TEXT("/Game/Assets/Town/Barrel/SM_Barrel")));
+    TestFalse(TEXT("a folder that only starts like an exception is not"), Resolver.IsOutsideTaxonomy(TEXT("/Game/_TestsExtra/BP_Probe")));
+    TestFalse(TEXT("a path outside the content root is not"), Resolver.IsOutsideTaxonomy(TEXT("/Engine/_Tests/BP_Probe")));
+    TestEqual(TEXT("Describe carries the exceptions"), Resolver.Describe().TopLevelExceptions.Num(), 2);
+    return true;
+}
 #endif

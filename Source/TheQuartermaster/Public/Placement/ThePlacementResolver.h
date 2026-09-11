@@ -128,6 +128,9 @@ struct FThePlacementStructure
     /** Resource kind -> directory name, e.g. mesh -> Meshes. */
     TMap<FString, FString> KindDirectories;
 
+    /** Top-level folders the taxonomy deliberately does not describe, e.g. _Tests, _Quarantine. */
+    TArray<FString> TopLevelExceptions;
+
     TArray<FThePlacementRuleInfo> Rules;
 };
 
@@ -189,6 +192,18 @@ public:
 
     /** The loaded taxonomy, for a caller that asks what the structure IS. */
     FThePlacementStructure Describe() const;
+
+    /**
+     * True when the package sits under one of the config's top-level exceptions - the scratch and custody
+     * folders (tests, quarantine, developer sandboxes) that the taxonomy leaves undescribed on purpose.
+     *
+     * Kept apart from Explain rather than folded into it as a fourth outcome: Explain answers «which rule
+     * accounts for this path», and for these folders the honest answer is still «none». A caller that GATES
+     * writes asks this first; a caller that REPORTS the tree still sees them as unexplained if it wants to.
+     *
+     * Case-insensitive, like the content browser: a test that writes to /Game/_tests lands in the same folder.
+     */
+    bool IsOutsideTaxonomy(const FString& PackagePath) const;
 
     const TArray<FString>& GetContexts() const { return Contexts; }
     const FString& GetContentRoot() const { return ContentRoot; }
@@ -295,4 +310,5 @@ private:
     TArray<FRule> Rules;
     TArray<FString> UnprefixedContexts;
     TArray<FRedirect> Redirects;
+    TArray<FString> TopLevelExceptions;
 };
