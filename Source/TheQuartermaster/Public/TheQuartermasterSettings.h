@@ -10,7 +10,7 @@
  * Every project-specific path this plugin knows lives here. Code that hardcodes a /Game/ literal
  * is a defect: the plugin is meant to arrive in a client project whose taxonomy it has never seen.
  */
-UCLASS(config = Editor, defaultconfig, meta = (DisplayName = "The Quartermaster"))
+UCLASS(config = Editor, defaultconfig, meta = (DisplayName = "#The Quartermaster"))
 class THEQUARTERMASTER_API UTheQuartermasterSettings : public UDeveloperSettings
 {
     GENERATED_BODY()
