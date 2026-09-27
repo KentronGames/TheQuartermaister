@@ -10,12 +10,14 @@
  * Every project-specific path this plugin knows lives here. Code that hardcodes a /Game/ literal
  * is a defect: the plugin is meant to arrive in a client project whose taxonomy it has never seen.
  */
-UCLASS(config = Editor, defaultconfig, meta = (DisplayName = "#The Quartermaster"))
+UCLASS(config = Editor, defaultconfig, meta = (DisplayName = "#Quartermaster"))
 class THEQUARTERMASTER_API UTheQuartermasterSettings : public UDeveloperSettings
 {
     GENERATED_BODY()
 
 public:
+    virtual FName GetCategoryName() const override { return TEXT("#The"); }
+
     UTheQuartermasterSettings();
 
     static const TCHAR* DefaultQuarantineRoot() { return TEXT("/Game/_Quarantine"); }
