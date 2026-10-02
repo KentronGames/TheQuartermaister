@@ -573,11 +573,17 @@ bool FThePlacementResolver::MatchTemplateSegments(const FRule& Rule, const TArra
             {
                 return MatchTemplateSegments(Rule, Template, TemplateAt + 1, Folder, FolderAt, Sub, Kind, OutFacts);
             }
-            if(FolderAt >= Folder.Num() || !Folder[FolderAt].Equals(Expected, ESearchCase::IgnoreCase))
+            // A kind directory may span several segments (`Audio/Raw` for a sound wave), so it is matched part by part.
+            TArray<FString> Parts;
+            Expected.ParseIntoArray(Parts, TEXT("/"));
+            for(int32 PartNdx = 0; PartNdx < Parts.Num(); ++PartNdx)
             {
-                return false;
+                if(FolderAt + PartNdx >= Folder.Num() || !Folder[FolderAt + PartNdx].Equals(Parts[PartNdx], ESearchCase::IgnoreCase))
+                {
+                    return false;
+                }
             }
-            return MatchTemplateSegments(Rule, Template, TemplateAt + 1, Folder, FolderAt + 1, Sub, Kind, OutFacts);
+            return MatchTemplateSegments(Rule, Template, TemplateAt + 1, Folder, FolderAt + Parts.Num(), Sub, Kind, OutFacts);
         }
 
         const FFactConstraint* Constraint = Rule.Facts.Find(Token);
