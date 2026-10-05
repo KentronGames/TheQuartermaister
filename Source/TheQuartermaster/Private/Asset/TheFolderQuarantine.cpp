@@ -49,6 +49,29 @@ FString OriginMarkerPath(const FString& QuarantineFolder)
     return GameFolderToDisk(QuarantineFolder) / OriginMarkerName;
 }
 
+// A package path is compared as text, but the folder is deleted on disk, where `..` climbs and
+// an empty segment collapses: `/Game/_Quarantine/../Gameplay` passes a prefix test and resolves
+// to Content/Gameplay, `/Game/_Quarantine//` to the quarantine root itself. So every segment
+// must be a plain name, and the resolved disk folder must still sit strictly below the root's.
+bool HasOnlyPlainSegments(const FString& Path)
+{
+    if(Path.Contains(TEXT("\\")) || Path.Contains(TEXT(":")))
+    {
+        return false;
+    }
+    TArray<FString> Segments;
+    Path.ParseIntoArray(Segments, TEXT("/"), /*InCullEmpty*/ false);
+    for(int32 SegmentNdx = 1; SegmentNdx < Segments.Num(); ++SegmentNdx)
+    {
+        const FString& Segment = Segments[SegmentNdx];
+        if(Segment.IsEmpty() || Segment == TEXT(".") || Segment == TEXT(".."))
+        {
+            return false;
+        }
+    }
+    return Segments.Num() > 1 && Segments[0].IsEmpty();
+}
+
 bool RefuseUnlessInsideQuarantine(const FString& Clean, FString& OutError)
 {
     const FString Root = FTheFolderQuarantine::QuarantineRoot();
@@ -60,6 +83,20 @@ bool RefuseUnlessInsideQuarantine(const FString& Clean, FString& OutError)
     if(!Clean.StartsWith(Root / TEXT("")))
     {
         OutError = FString::Printf(TEXT("refused: %s is not under the quarantine root %s"), *Clean, *Root);
+        return false;
+    }
+    if(!HasOnlyPlainSegments(Clean))
+    {
+        OutError = FString::Printf(TEXT("refused: %s has an empty, '.' or '..' segment - name the pack folder plainly"), *Clean);
+        return false;
+    }
+    FString DiskFolder = GameFolderToDisk(Clean);
+    FString DiskRoot = GameFolderToDisk(Root);
+    FPaths::NormalizeDirectoryName(DiskFolder);
+    FPaths::NormalizeDirectoryName(DiskRoot);
+    if(DiskFolder.Equals(DiskRoot, ESearchCase::IgnoreCase) || !FPaths::IsUnderDirectory(DiskFolder, DiskRoot))
+    {
+        OutError = FString::Printf(TEXT("refused: %s resolves to %s, which is not a folder inside %s"), *Clean, *DiskFolder, *DiskRoot);
         return false;
     }
     return true;
@@ -411,7 +448,7 @@ bool FTheFolderQuarantine::RestoreFromQuarantine(const FString& Folder, FString&
         return false;
     }
     Origin.TrimStartAndEndInline();
-    if(Origin.IsEmpty() || !Origin.StartsWith(TEXT("/Game/")))
+    if(Origin.IsEmpty() || !Origin.StartsWith(TEXT("/Game/")) || !HasOnlyPlainSegments(Origin))
     {
         OutError = FString::Printf(TEXT("the origin marker in %s does not record a /Game/ folder: '%s'"), *Clean, *Origin);
         return false;
@@ -453,7 +490,8 @@ bool FTheFolderQuarantine::DropQuarantineBookkeepingAfterPackagesLeft(const FStr
 {
     FString Clean = Folder;
     Clean.RemoveFromEnd(TEXT("/"));
-    if(!Clean.StartsWith(QuarantineRoot() / TEXT("")))
+    FString Refusal;
+    if(!RefuseUnlessInsideQuarantine(Clean, Refusal))
     {
         return false;
     }
@@ -478,7 +516,8 @@ bool FTheFolderQuarantine::HoldsNothingButTheOriginMarker(const FString& Folder)
 {
     FString Clean = Folder;
     Clean.RemoveFromEnd(TEXT("/"));
-    if(!Clean.StartsWith(QuarantineRoot() / TEXT("")))
+    FString Refusal;
+    if(!RefuseUnlessInsideQuarantine(Clean, Refusal))
     {
         return false;
     }

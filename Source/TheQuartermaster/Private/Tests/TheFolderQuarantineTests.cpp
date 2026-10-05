@@ -215,6 +215,25 @@ bool FTheQuartermasterQuarantineGuardTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("the refusal names the root"), Error.Contains(Root));
 
     TestFalse(TEXT("deleting a path outside the root is refused"), FTheFolderQuarantine::DeleteFromQuarantine(TEXT("/Game/SomethingElse"), /*bForce*/ false, Report, Error));
+
+    // A prefix test alone lets these through: on disk `..` climbs out and `//` collapses onto the
+    // root, so the first would delete a live Content folder and the second every parked pack.
+    const FString Escapes[] = {
+        Root / TEXT("../SomethingElse"),
+        Root / TEXT("Pack/../../SomethingElse"),
+        Root + TEXT("//"),
+        Root + TEXT("//Pack"),
+        Root / TEXT("./Pack"),
+        Root / TEXT("Pack/.."),
+        Root + TEXT("/..\\SomethingElse"),
+    };
+    for(const FString& Escape : Escapes)
+    {
+        Error.Reset();
+        TestFalse(FString::Printf(TEXT("deleting '%s' is refused"), *Escape), FTheFolderQuarantine::DeleteFromQuarantine(Escape, /*bForce*/ false, Report, Error));
+        TestTrue(FString::Printf(TEXT("the refusal for '%s' says why"), *Escape), Error.StartsWith(TEXT("refused")));
+        TestFalse(FString::Printf(TEXT("restoring '%s' is refused"), *Escape), FTheFolderQuarantine::RestoreFromQuarantine(Escape, Report, bNeedsRestart, Error));
+    }
     TestFalse(TEXT("restoring a path outside the root is refused"), FTheFolderQuarantine::RestoreFromQuarantine(TEXT("/Game/SomethingElse"), Report, bNeedsRestart, Error));
     TestFalse(TEXT("quarantining a non-/Game path is refused"), FTheFolderQuarantine::MoveToQuarantine(TEXT("/Engine/Whatever"), Report, bNeedsRestart, Error));
     TestFalse(TEXT("quarantining something already in quarantine is refused"), FTheFolderQuarantine::MoveToQuarantine(Root / TEXT("Anything"), Report, bNeedsRestart, Error));
