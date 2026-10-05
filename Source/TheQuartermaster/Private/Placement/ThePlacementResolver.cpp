@@ -88,12 +88,18 @@ bool FThePlacementResolver::LoadConfigFromString(const FString& Json, FString& O
     UnprefixedContexts.Reset();
     TopLevelExceptions.Reset();
     ClassPrefixes.Reset();
+    PluginContentRoots.Reset();
 
     Root->TryGetStringField(TEXT("content_root"), ContentRoot);
     ContentRoot.RemoveFromEnd(TEXT("/"));
     if(ContentRoot.IsEmpty())
     {
         ContentRoot = TEXT("/Game");
+    }
+    Root->TryGetStringArrayField(TEXT("plugin_content_roots"), PluginContentRoots);
+    for(FString& PluginRoot : PluginContentRoots)
+    {
+        PluginRoot.RemoveFromEnd(TEXT("/"));
     }
 
     ReadStringMap(Root, TEXT("prefixes"), PrefixKinds);
@@ -511,9 +517,21 @@ FThePlacementStructure FThePlacementResolver::Describe() const
     return Structure;
 }
 
+FString FThePlacementResolver::AsContentPath(const FString& PackagePath) const
+{
+    for(const FString& PluginRoot : PluginContentRoots)
+    {
+        if(PackagePath.StartsWith(PluginRoot + TEXT("/"), ESearchCase::IgnoreCase))
+        {
+            return ContentRoot + PackagePath.RightChop(PluginRoot.Len());
+        }
+    }
+    return PackagePath;
+}
+
 bool FThePlacementResolver::IsOutsideTaxonomy(const FString& PackagePath) const
 {
-    FString Trimmed = PackagePath;
+    FString Trimmed = AsContentPath(PackagePath);
     Trimmed.Split(TEXT("."), &Trimmed, nullptr);
     if(!Trimmed.StartsWith(ContentRoot + TEXT("/"), ESearchCase::IgnoreCase))
     {
@@ -694,9 +712,13 @@ FThePathExplanation FThePlacementResolver::Explain(const FString& PackagePath) c
     while(Trimmed.RemoveFromEnd(TEXT("/")))
     {
     }
+    Trimmed = AsContentPath(Trimmed);
     if(!Trimmed.StartsWith(ContentRoot + TEXT("/"), ESearchCase::IgnoreCase))
     {
-        Explanation.Error = FString::Printf(TEXT("'%s' is not under the configured content root %s"), *PackagePath, *ContentRoot);
+        Explanation.Error = FString::Printf(TEXT("'%s' is not under the configured content root %s%s"),
+            *PackagePath,
+            *ContentRoot,
+            PluginContentRoots.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(" or a plugin content root (%s)"), *FString::Join(PluginContentRoots, TEXT(", "))));
         return Explanation;
     }
 

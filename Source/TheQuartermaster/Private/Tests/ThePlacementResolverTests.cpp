@@ -4,10 +4,10 @@
 
 #if WITH_DEV_AUTOMATION_TESTS
 
-#include "Placement/ThePlacementResolver.h"
+    #include "Placement/ThePlacementResolver.h"
 
-#include "Interfaces/IPluginManager.h"
-#include "Misc/Paths.h"
+    #include "Interfaces/IPluginManager.h"
+    #include "Misc/Paths.h"
 
 namespace TheQuartermasterPlacementTests
 {
@@ -45,16 +45,13 @@ bool FThePlacementBothTaxonomiesTest::RunTest(const FString& Parameters)
         return false;
     }
 
-    const FThePlacementResult OwhLibrary = Owh.Resolve(Facts(TEXT("SM_Tower01"), TEXT("library"),
-        {{TEXT("geography"), TEXT("City")}, {TEXT("category"), TEXT("Buildings")}, {TEXT("family"), TEXT("Tower01")}}));
+    const FThePlacementResult OwhLibrary = Owh.Resolve(Facts(TEXT("SM_Tower01"), TEXT("library"), {{TEXT("geography"), TEXT("City")}, {TEXT("category"), TEXT("Buildings")}, {TEXT("family"), TEXT("Tower01")}}));
     TestEqual(TEXT("OWH library placement"), OwhLibrary.PackagePath, FString(TEXT("/Game/Assets/City/Buildings/Tower01/Meshes/SM_Tower01")));
 
-    const FThePlacementResult Flat = Forms.Resolve(Facts(TEXT("SM_Tower01"), TEXT("library"),
-        {{TEXT("category"), TEXT("Town")}, {TEXT("entity"), TEXT("Tower01")}}));
+    const FThePlacementResult Flat = Forms.Resolve(Facts(TEXT("SM_Tower01"), TEXT("library"), {{TEXT("category"), TEXT("Town")}, {TEXT("entity"), TEXT("Tower01")}}));
     TestEqual(TEXT("a section of one segment"), Flat.PackagePath, FString(TEXT("/Game/Assets/Town/Tower01/SM_Tower01")));
 
-    const FThePlacementResult Deep = Forms.Resolve(Facts(TEXT("SM_Cliff01"), TEXT("library"),
-        {{TEXT("category"), TEXT("Nature/Rocks")}, {TEXT("entity"), TEXT("Cliff01")}}));
+    const FThePlacementResult Deep = Forms.Resolve(Facts(TEXT("SM_Cliff01"), TEXT("library"), {{TEXT("category"), TEXT("Nature/Rocks")}, {TEXT("entity"), TEXT("Cliff01")}}));
     TestEqual(TEXT("a section of two segments"), Deep.PackagePath, FString(TEXT("/Game/Assets/Nature/Rocks/Cliff01/SM_Cliff01")));
 
     const FThePlacementResult OwhShared = Owh.Resolve(Facts(TEXT("T_Noise"), TEXT("shared"), {{TEXT("category"), TEXT("Utility")}}));
@@ -98,8 +95,7 @@ bool FThePlacementFiveFormsTest::RunTest(const FString& Parameters)
     const FThePlacementResult Malformed = Resolver.Resolve(Facts(TEXT("DLG_Intro"), TEXT("chapter"), {{TEXT("chapter"), TEXT("Yard")}}));
     TestEqual(TEXT("a fact off its declared shape is refused"), Malformed.Outcome, EThePlacementOutcome::Rejected);
 
-    const FThePlacementResult SharedAsSection = Resolver.Resolve(Facts(TEXT("SM_Part"), TEXT("library"),
-        {{TEXT("category"), TEXT("Shared")}, {TEXT("entity"), TEXT("Parts")}}));
+    const FThePlacementResult SharedAsSection = Resolver.Resolve(Facts(TEXT("SM_Part"), TEXT("library"), {{TEXT("category"), TEXT("Shared")}, {TEXT("entity"), TEXT("Parts")}}));
     TestEqual(TEXT("a refused value does not place"), SharedAsSection.Outcome, EThePlacementOutcome::Rejected);
     TestTrue(TEXT("the refusal carries its reason"), SharedAsSection.Error.Contains(TEXT("not a section")));
     const FThePlacementResult Any = Resolver.Resolve(Facts(TEXT("M_Generic"), TEXT("surface"), {{TEXT("category"), TEXT("Any")}}));
@@ -180,8 +176,7 @@ bool FThePlacementRefusalTest::RunTest(const FString& Parameters)
     const FThePlacementResult BadContext = Resolver.Resolve(Facts(TEXT("SM_Thing"), TEXT("not-a-context")));
     TestEqual(TEXT("unknown context is rejected"), BadContext.Outcome, EThePlacementOutcome::Rejected);
 
-    const FThePlacementResult Incomplete = Resolver.Resolve(Facts(TEXT("SM_Tower01"), TEXT("library"),
-        {{TEXT("geography"), TEXT("City")}}));
+    const FThePlacementResult Incomplete = Resolver.Resolve(Facts(TEXT("SM_Tower01"), TEXT("library"), {{TEXT("geography"), TEXT("City")}}));
     TestEqual(TEXT("incomplete facts do not place"), Incomplete.Outcome, EThePlacementOutcome::NeedsFacts);
     TestEqual(TEXT("both missing facts are named at once"), Incomplete.MissingFacts.Num(), 2);
     TestTrue(TEXT("category is named"), Incomplete.MissingFacts.Contains(TEXT("category")));
@@ -217,8 +212,7 @@ bool FThePlacementDescribesItselfTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("the prefix table is carried"), Structure.PrefixKinds.Contains(TEXT("SM")));
     TestTrue(TEXT("the kind directories are carried"), Structure.KindDirectories.Contains(TEXT("mesh")));
 
-    const FThePlacementRuleInfo* Library = Structure.Rules.FindByPredicate(
-        [](const FThePlacementRuleInfo& Rule) { return Rule.Context == TEXT("library"); });
+    const FThePlacementRuleInfo* Library = Structure.Rules.FindByPredicate([](const FThePlacementRuleInfo& Rule) { return Rule.Context == TEXT("library"); });
     if(!TestNotNull(TEXT("the library rule is described"), Library))
     {
         return false;
@@ -227,8 +221,7 @@ bool FThePlacementDescribesItselfTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("its required facts are named"), Library->Requires.Num(), 3);
     TestTrue(TEXT("a library asset carries a prefix"), Library->bRequiresPrefix);
 
-    const FThePlacementRuleInfo* Map = Structure.Rules.FindByPredicate(
-        [](const FThePlacementRuleInfo& Rule) { return Rule.Context == TEXT("map"); });
+    const FThePlacementRuleInfo* Map = Structure.Rules.FindByPredicate([](const FThePlacementRuleInfo& Rule) { return Rule.Context == TEXT("map"); });
     if(!TestNotNull(TEXT("the map rule is described"), Map))
     {
         return false;
@@ -249,8 +242,7 @@ bool FThePlacementRoundTripTest::RunTest(const FString& Parameters)
         return false;
     }
 
-    const FThePlacementResult Placed = Owh.Resolve(Facts(TEXT("SM_Tower01"), TEXT("library"),
-        {{TEXT("geography"), TEXT("City")}, {TEXT("category"), TEXT("Buildings")}, {TEXT("family"), TEXT("Tower01")}}));
+    const FThePlacementResult Placed = Owh.Resolve(Facts(TEXT("SM_Tower01"), TEXT("library"), {{TEXT("geography"), TEXT("City")}, {TEXT("category"), TEXT("Buildings")}, {TEXT("family"), TEXT("Tower01")}}));
     const FThePathExplanation Read = Owh.Explain(Placed.PackagePath);
     TestEqual(TEXT("the path it produced is explained"), Read.Outcome, ETheExplanationOutcome::Matched);
     TestEqual(TEXT("back to the same context"), Read.Context, FString(TEXT("library")));
@@ -348,15 +340,37 @@ bool FThePlacementOutsideTaxonomyTest::RunTest(const FString& Parameters)
     return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThePlacementPluginRootTest, "TheQuartermaster.Placement.PluginContentRootIsLaidOutLikeTheGame", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThePlacementPluginRootTest::RunTest(const FString& Parameters)
+{
+    FThePlacementResolver Resolver;
+    FString Error;
+    const FString Json = TEXT("{\"content_root\":\"/Game\",\"plugin_content_roots\":[\"/TheGameKit/\"],\"top_level\":{\"roots\":[\"Assets\"],\"exceptions\":[\"_Tests\"]},")
+        TEXT("\"prefixes\":{\"SM\":\"mesh\"},\"rules\":[{\"context\":\"library\",\"folder\":\"Assets/{category}/{entity}\",\"requires\":[\"category\",\"entity\"]}]}");
+    if(!TestTrue(FString::Printf(TEXT("the config loads: %s"), *Error), Resolver.LoadConfigFromString(Json, Error)))
+    {
+        return false;
+    }
+
+    const FThePathExplanation Kit = Resolver.Explain(TEXT("/TheGameKit/Assets/Town/Barrel/SM_Barrel"));
+    TestEqual(FString::Printf(TEXT("a kit package is judged by the game's layout (%s)"), *Kit.Error), Kit.Outcome, ETheExplanationOutcome::Matched);
+    TestEqual(TEXT("its content path is the same path under the content root"), Resolver.AsContentPath(TEXT("/TheGameKit/Assets/Town/Barrel/SM_Barrel")), FString(TEXT("/Game/Assets/Town/Barrel/SM_Barrel")));
+    TestTrue(TEXT("the kit's own _Tests folder is outside the taxonomy, as the game's is"), Resolver.IsOutsideTaxonomy(TEXT("/TheGameKit/_Tests/BP_Probe")));
+    TestFalse(TEXT("a kit package in a folder no rule explains is still refused"), Resolver.Explain(TEXT("/TheGameKit/Junk/SM_Barrel")).Outcome == ETheExplanationOutcome::Matched);
+    const FThePathExplanation Other = Resolver.Explain(TEXT("/OtherPlugin/Assets/Town/Barrel/SM_Barrel"));
+    TestTrue(FString::Printf(TEXT("a plugin not listed is not under any root (%s)"), *Other.Error), Other.Error.Contains(TEXT("not under the configured content root")));
+    TestEqual(TEXT("a plugin whose name only starts like a root is not under it"), Resolver.AsContentPath(TEXT("/TheGameKitExtra/Assets/SM_X")), FString(TEXT("/TheGameKitExtra/Assets/SM_X")));
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThePlacementClassPrefixTest, "TheQuartermaster.Placement.ClassNamesItsPrefixByKind", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FThePlacementClassPrefixTest::RunTest(const FString& Parameters)
 {
     FThePlacementResolver Resolver;
     FString Error;
-    const FString Json = TEXT("{\"content_root\":\"/Game\",")
-        TEXT("\"prefixes\":{\"SM\":\"mesh\",\"SK\":\"mesh\",\"AS\":\"anim\",\"MM\":\"anim\",\"MF\":\"material\",\"PHYS\":\"physics\",\"S\":\"audio\"},")
+    const FString Json = TEXT("{\"content_root\":\"/Game\",") TEXT("\"prefixes\":{\"SM\":\"mesh\",\"SK\":\"mesh\",\"AS\":\"anim\",\"MM\":\"anim\",\"MF\":\"material\",\"PHYS\":\"physics\",\"S\":\"audio\"},")
         TEXT("\"class_prefixes\":{\"StaticMesh\":\"SM\",\"SkeletalMesh\":\"SK\",\"AnimSequence\":\"AS\",\"PhysicsAsset\":\"PHYS\"},")
-        TEXT("\"rules\":[{\"context\":\"library\",\"folder\":\"Assets/{category}/{entity}\",\"requires\":[\"category\",\"entity\"]}]}");
+            TEXT("\"rules\":[{\"context\":\"library\",\"folder\":\"Assets/{category}/{entity}\",\"requires\":[\"category\",\"entity\"]}]}");
     if(!TestTrue(FString::Printf(TEXT("the config loads: %s"), *Error), Resolver.LoadConfigFromString(Json, Error)))
     {
         return false;

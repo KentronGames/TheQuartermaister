@@ -234,6 +234,14 @@ public:
     const TArray<FString>& GetContexts() const { return Contexts; }
     const FString& GetContentRoot() const { return ContentRoot; }
 
+    /**
+     * PACKAGEPATH as the taxonomy reads it: a package under a plugin content root of the config's
+     * `plugin_content_roots` (/TheGameKit, a shared kit every game mounts) is laid out like the game's own content,
+     * so it is judged as the same path under the content root - /TheGameKit/Core/Input/X as /Game/Core/Input/X.
+     * Any other path is returned as it came.
+     */
+    FString AsContentPath(const FString& PackagePath) const;
+
 private:
     /**
      * What a rule allows ONE fact's value to be. Every field is optional, and a rule that declares none
@@ -341,4 +349,6 @@ private:
     TArray<FRedirect> Redirects;
     TArray<FString> TopLevelExceptions;
     TMap<FString, FString> ClassPrefixes;
+    /** Plugin mount points whose content is laid out like the content root (`plugin_content_roots`). */
+    TArray<FString> PluginContentRoots;
 };
