@@ -61,4 +61,4 @@ and the custody root is a setting. Nothing it does reaches a packaged build; the
 
 ## Licence
 
-© 2026 Kentron Cowboys. All rights reserved.
+MIT — © 2026 Kentron Cowboys. The full text is in [`LICENSE`](LICENSE).
