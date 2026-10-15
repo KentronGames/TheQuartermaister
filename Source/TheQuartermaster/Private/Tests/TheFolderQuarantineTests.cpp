@@ -11,6 +11,7 @@
 
     #include "HAL/FileManager.h"
     #include "Misc/PackageName.h"
+    #include "Misc/Paths.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTheQuartermasterQuarantineRoundTripTest, "TheQuartermaster.Quarantine.MoveVerifyRestore", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FTheQuartermasterQuarantineRoundTripTest::RunTest(const FString& Parameters)
@@ -237,6 +238,43 @@ bool FTheQuartermasterQuarantineGuardTest::RunTest(const FString& Parameters)
     TestFalse(TEXT("restoring a path outside the root is refused"), FTheFolderQuarantine::RestoreFromQuarantine(TEXT("/Game/SomethingElse"), Report, bNeedsRestart, Error));
     TestFalse(TEXT("quarantining a non-/Game path is refused"), FTheFolderQuarantine::MoveToQuarantine(TEXT("/Engine/Whatever"), Report, bNeedsRestart, Error));
     TestFalse(TEXT("quarantining something already in quarantine is refused"), FTheFolderQuarantine::MoveToQuarantine(Root / TEXT("Anything"), Report, bNeedsRestart, Error));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTheQuartermasterQuarantineSourceGuardTest, "TheQuartermaster.Quarantine.RefusesASourceThatContainsTheRoot", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FTheQuartermasterQuarantineSourceGuardTest::RunTest(const FString& Parameters)
+{
+    FString Report;
+    FString Error;
+    const FString Root = FTheFolderQuarantine::QuarantineRoot();
+
+    // Each of these resolves to Content (or to a folder holding the root) on disk; the move went into
+    // itself and the source delete erased the whole project. Only the Plan is called: it runs the same
+    // guard as the move, and a regression must not be able to reach the disk from a test.
+    const FString Sources[] = {
+        TEXT("/Game//"),
+        TEXT("/Game/."),
+        TEXT("/Game/./"),
+        TEXT("/Game/Pack/.."),
+        TEXT("/Game/Pack/../Other"),
+        TEXT("/Game//Pack"),
+        FPaths::GetPath(Root),
+        Root + TEXT("Old"),
+    };
+    for(const FString& Source : Sources)
+    {
+        Error.Reset();
+        const bool bPlanned = FTheFolderQuarantine::PlanMoveToQuarantine(Source, Report, Error);
+        if(Source == Root + TEXT("Old"))
+        {
+            TestFalse(FString::Printf(TEXT("'%s' is not read as inside the root - the refusal is not 'already in quarantine'"), *Source), Error.Contains(TEXT("already in quarantine")));
+            continue;
+        }
+        TestFalse(FString::Printf(TEXT("quarantining '%s' is refused"), *Source), bPlanned);
+        // The path guard must be what refuses: the later "already exists in quarantine" check only fires
+        // while the root exists on disk, and the erasure happened exactly when it did not.
+        TestTrue(FString::Printf(TEXT("'%s' is refused by the path guard, not by an incidental disk check: %s"), *Source, *Error), Error.StartsWith(TEXT("refused")) || Error.StartsWith(TEXT("only /Game/")));
+    }
     return true;
 }
 

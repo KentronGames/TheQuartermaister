@@ -125,6 +125,64 @@ FString DescribeReferencers(const TArray<FString>& Referencers)
     return List;
 }
 
+// The source of a move is free-form agent input: `/Game//` or `/Game/.` resolves to Content itself, and
+// moving Content into its own quarantine subfolder and then deleting the source erased the whole project.
+bool RefuseUnlessQuarantinable(const FString& Folder, FString& OutError)
+{
+    const FString Root = FTheFolderQuarantine::QuarantineRoot();
+    if(!Folder.StartsWith(TEXT("/Game/")))
+    {
+        OutError = TEXT("only /Game/ folders can be quarantined");
+        return false;
+    }
+    if(!HasOnlyPlainSegments(Folder))
+    {
+        OutError = FString::Printf(TEXT("refused: %s has an empty, '.' or '..' segment - name the pack folder plainly"), *Folder);
+        return false;
+    }
+    if(Folder == Root || Folder.StartsWith(Root / TEXT("")))
+    {
+        OutError = TEXT("already in quarantine");
+        return false;
+    }
+    if(Root.StartsWith(Folder / TEXT("")))
+    {
+        OutError = FString::Printf(TEXT("refused: the quarantine root %s lies inside %s - a folder cannot be moved into itself"), *Root, *Folder);
+        return false;
+    }
+    FString DiskFolder = GameFolderToDisk(Folder);
+    FString DiskRoot = GameFolderToDisk(Root);
+    FPaths::NormalizeDirectoryName(DiskFolder);
+    FPaths::NormalizeDirectoryName(DiskRoot);
+    if(DiskFolder.Equals(DiskRoot, ESearchCase::IgnoreCase) || FPaths::IsUnderDirectory(DiskRoot, DiskFolder))
+    {
+        OutError = FString::Printf(TEXT("refused: %s resolves to %s, which contains the quarantine root %s"), *Folder, *DiskFolder, *DiskRoot);
+        return false;
+    }
+    return true;
+}
+
+// Unloading with bUnloadDirtyPackages discards unsaved edits without a word, so a dirty package refuses the
+// operation instead.
+bool RefuseIfDirtyUnder(const FString& Folder, FString& OutError)
+{
+    const FString Prefix = Folder + TEXT("/");
+    TArray<FString> Dirty;
+    for(TObjectIterator<UPackage> It; It; ++It)
+    {
+        if(It->IsDirty() && It->GetName().StartsWith(Prefix))
+        {
+            Dirty.Add(It->GetName());
+        }
+    }
+    if(Dirty.Num() > 0)
+    {
+        OutError = FString::Printf(TEXT("refused: %d package(s) under %s have unsaved changes - save or discard them first:%s"), Dirty.Num(), *Folder, *DescribeReferencers(Dirty));
+        return false;
+    }
+    return true;
+}
+
 bool UnloadAndCollect(const FString& Folder)
 {
     TArray<UPackage*> ToUnload;
@@ -152,6 +210,15 @@ bool MoveDirOnDisk(const FString& SrcAbs, const FString& DestAbs, FString& OutEr
     if(!FileManager.DirectoryExists(*SrcAbs))
     {
         OutError = FString::Printf(TEXT("source folder not found on disk: %s"), *SrcAbs);
+        return false;
+    }
+    FString SrcNorm = SrcAbs;
+    FString DestNorm = DestAbs;
+    FPaths::NormalizeDirectoryName(SrcNorm);
+    FPaths::NormalizeDirectoryName(DestNorm);
+    if(DestNorm.Equals(SrcNorm, ESearchCase::IgnoreCase) || FPaths::IsUnderDirectory(DestNorm, SrcNorm))
+    {
+        OutError = FString::Printf(TEXT("refused: %s lies inside %s - a folder cannot be moved into itself"), *DestAbs, *SrcAbs);
         return false;
     }
     FileManager.MakeDirectory(*FPaths::GetPath(DestAbs), /*Tree*/ true);
@@ -211,14 +278,8 @@ bool FTheFolderQuarantine::PlanMoveToQuarantine(const FString& SourceFolder, FSt
 {
     FString Folder = SourceFolder;
     Folder.RemoveFromEnd(TEXT("/"));
-    if(!Folder.StartsWith(TEXT("/Game/")))
+    if(!RefuseUnlessQuarantinable(Folder, OutError))
     {
-        OutError = TEXT("only /Game/ folders can be quarantined");
-        return false;
-    }
-    if(Folder.StartsWith(QuarantineRoot()))
-    {
-        OutError = TEXT("already in quarantine");
         return false;
     }
 
@@ -251,14 +312,8 @@ bool FTheFolderQuarantine::MoveToQuarantine(const FString& SourceFolder, FString
 
     FString Folder = SourceFolder;
     Folder.RemoveFromEnd(TEXT("/"));
-    if(!Folder.StartsWith(TEXT("/Game/")))
+    if(!RefuseUnlessQuarantinable(Folder, OutError))
     {
-        OutError = TEXT("only /Game/ folders can be quarantined");
-        return false;
-    }
-    if(Folder.StartsWith(QuarantineRoot()))
-    {
-        OutError = TEXT("already in quarantine");
         return false;
     }
 
@@ -272,7 +327,15 @@ bool FTheFolderQuarantine::MoveToQuarantine(const FString& SourceFolder, FString
         return false;
     }
 
-    OutNeedsRestart = !UnloadAndCollect(Folder);
+    if(!RefuseIfDirtyUnder(Folder, OutError))
+    {
+        return false;
+    }
+    if(!UnloadAndCollect(Folder))
+    {
+        OutError = FString::Printf(TEXT("refused to quarantine %s - a package under it could not be unloaded, and moving files the editor still holds splits the pack. Close what is open (or restart the editor) and retry"), *Folder);
+        return false;
+    }
 
     if(!MoveDirOnDisk(SrcAbs, DestAbs, OutError))
     {
@@ -462,7 +525,15 @@ bool FTheFolderQuarantine::RestoreFromQuarantine(const FString& Folder, FString&
         return false;
     }
 
-    OutNeedsRestart = !UnloadAndCollect(Clean);
+    if(!RefuseIfDirtyUnder(Clean, OutError))
+    {
+        return false;
+    }
+    if(!UnloadAndCollect(Clean))
+    {
+        OutError = FString::Printf(TEXT("refused to restore %s - a package under it could not be unloaded, and moving files the editor still holds splits the pack. Close what is open (or restart the editor) and retry"), *Clean);
+        return false;
+    }
 
     if(!MoveDirOnDisk(SrcAbs, DestAbs, OutError))
     {
