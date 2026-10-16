@@ -22,10 +22,7 @@ const TCHAR* SkippedDirectories[] = {TEXT("Intermediate"), TEXT("Binaries"), TEX
 
 bool IsScannableFile(const FString& FilePath)
 {
-    static const TSet<FString> Suffixes = {
-        TEXT("ini"), TEXT("uproject"), TEXT("uplugin"), TEXT("cpp"), TEXT("h"),
-        TEXT("cs"), TEXT("py"), TEXT("ps1"), TEXT("cmd"), TEXT("json")
-    };
+    static const TSet<FString> Suffixes = {TEXT("ini"), TEXT("uproject"), TEXT("uplugin"), TEXT("cpp"), TEXT("h"), TEXT("cs"), TEXT("py"), TEXT("ps1"), TEXT("cmd"), TEXT("json")};
     if(!Suffixes.Contains(FPaths::GetExtension(FilePath).ToLower()))
     {
         return false;
@@ -99,19 +96,26 @@ bool FTheTextReferenceScan::Scan(FTheTextScanResult& OutResult, FString& OutErro
     {
         TArray<FString> Found;
         IFileManager::Get().FindFilesRecursive(Found, *(ProjectDir / Directory), TEXT("*"), /*Files*/ true, /*Directories*/ false);
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("TextScan: %s holds %d file(s)"), *(ProjectDir / Directory), Found.Num());
         Files.Append(MoveTemp(Found));
     }
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("TextScan: %d known package(s), %d known folder(s), %d file(s) to filter"), KnownPackages.Num(), KnownFolders.Num(), Files.Num());
 
     const FRegexPattern Pattern(TEXT("/Game/[A-Za-z0-9_./-]+"));
+    int32 FilesSkipped = 0;
+    int32 FilesUnreadable = 0;
     for(const FString& File : Files)
     {
         if(!IsScannableFile(File))
         {
+            ++FilesSkipped;
             continue;
         }
         FString Text;
         if(!FFileHelper::LoadFileToString(Text, *File))
         {
+            ++FilesUnreadable;
+            UE_LOG(LogTheQuartermaster, Verbose, TEXT("TextScan: could not read %s"), *File);
             continue;
         }
         OutResult.FilesScanned++;
@@ -128,17 +132,16 @@ bool FTheTextReferenceScan::Scan(FTheTextScanResult& OutResult, FString& OutErro
             {
                 continue;
             }
-            TMap<FString, TArray<FString>>& Bucket = (KnownPackages.Contains(Package) || KnownFolders.Contains(Package))
-                ? OutResult.ReferencedPackages
-                : OutResult.UnresolvedPaths;
+            TMap<FString, TArray<FString>>& Bucket = (KnownPackages.Contains(Package) || KnownFolders.Contains(Package)) ? OutResult.ReferencedPackages : OutResult.UnresolvedPaths;
             Bucket.FindOrAdd(Package).AddUnique(Relative);
         }
     }
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("TextScan: %d file(s) skipped by suffix or generated folder, %d unreadable"), FilesSkipped, FilesUnreadable);
+    for(const TPair<FString, TArray<FString>>& Unresolved : OutResult.UnresolvedPaths)
+    {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("TextScan: unresolved %s in %s"), *Unresolved.Key, *FString::Join(Unresolved.Value, TEXT(", ")));
+    }
 
-    UE_LOG(LogTheQuartermaster, Display, TEXT("THEQM_TEXTSCAN files=%d tokens=%d referenced=%d unresolved=%d"),
-        OutResult.FilesScanned,
-        OutResult.TokensSeen,
-        OutResult.ReferencedPackages.Num(),
-        OutResult.UnresolvedPaths.Num());
+    UE_LOG(LogTheQuartermaster, Display, TEXT("THEQM_TEXTSCAN files=%d tokens=%d referenced=%d unresolved=%d"), OutResult.FilesScanned, OutResult.TokensSeen, OutResult.ReferencedPackages.Num(), OutResult.UnresolvedPaths.Num());
     return true;
 }

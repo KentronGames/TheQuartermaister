@@ -22,6 +22,7 @@ FString UTheQuartermasterSettings::ResolvedQuarantineRoot()
     // /Game itself would make every folder in the project "already in quarantine", and a root
     // outside /Game cannot be expressed as a package path at all.
     const bool bUsable = Root.StartsWith(TEXT("/Game/")) && Root.Len() > FCString::Strlen(TEXT("/Game/"));
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("ResolvedQuarantineRoot: setting '%s', usable=%d"), *Root, bUsable ? 1 : 0);
     if(!bUsable)
     {
         if(!Root.IsEmpty())
@@ -45,9 +46,11 @@ FString UTheQuartermasterSettings::ResolvedPlacementConfigPath()
 
     // Relative means relative to the project, not to whatever directory the process was started in:
     // a commandlet, the editor and a test runner all have different working directories.
-    if(FPaths::IsRelative(Path))
+    const bool bRelative = FPaths::IsRelative(Path);
+    if(bRelative)
     {
         Path = FPaths::ProjectDir() / Path;
     }
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("ResolvedPlacementConfigPath: setting '%s', relative=%d -> %s"), *Settings->PlacementConfigPath, bRelative ? 1 : 0, *FPaths::ConvertRelativePathToFull(Path));
     return FPaths::ConvertRelativePathToFull(Path);
 }

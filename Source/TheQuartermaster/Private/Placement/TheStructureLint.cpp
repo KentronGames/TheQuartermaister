@@ -29,9 +29,7 @@ int32 MatchedDepth(const TArray<FString>& Segments, const FString& Pattern, bool
     {
         return INDEX_NONE;
     }
-    const bool bLengthFits = bExactLength
-        ? Segments.Num() == PatternSegments.Num()
-        : Segments.Num() > PatternSegments.Num();
+    const bool bLengthFits = bExactLength ? Segments.Num() == PatternSegments.Num() : Segments.Num() > PatternSegments.Num();
     if(!bLengthFits)
     {
         return INDEX_NONE;
@@ -108,7 +106,9 @@ bool FTheStructureLint::IsAssembly(const FString& Family, const FTheLintConfig& 
 bool FTheStructureLint::LoadConfig(const FString& FilePath, FTheLintConfig& OutConfig, FString& OutError)
 {
     FString Json;
-    if(!FFileHelper::LoadFileToString(Json, *FPaths::ConvertRelativePathToFull(FilePath)))
+    const bool bRead = FFileHelper::LoadFileToString(Json, *FPaths::ConvertRelativePathToFull(FilePath));
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("Lint.LoadConfig: '%s' -> %s, read=%d, %d char(s)"), *FilePath, *FPaths::ConvertRelativePathToFull(FilePath), bRead ? 1 : 0, Json.Len());
+    if(!bRead)
     {
         OutError = FString::Printf(TEXT("cannot read config: %s"), *FilePath);
         return false;
@@ -140,6 +140,7 @@ bool FTheStructureLint::LoadConfig(const FString& FilePath, FTheLintConfig& OutC
     int32 Depth = 0;
     if(OutConfig.FamilyPatterns.IsEmpty() && (*Lint)->TryGetNumberField(TEXT("family_depth"), Depth))
     {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("Lint.LoadConfig: no family_patterns, using family_depth %d"), Depth);
         // A uniform depth is the one-pattern case, kept so an existing config still loads.
         TArray<FString> Wildcards;
         for(int32 Index = 0; Index < FMath::Max(1, Depth); ++Index)
@@ -170,8 +171,7 @@ bool FTheStructureLint::LoadConfig(const FString& FilePath, FTheLintConfig& OutC
             }
             else
             {
-                OutError = FString::Printf(TEXT("rule_severity['%s'] must be 'error' or 'warning', got '%s'"),
-                    *Pair.Key, *Value);
+                OutError = FString::Printf(TEXT("rule_severity['%s'] must be 'error' or 'warning', got '%s'"), *Pair.Key, *Value);
                 return false;
             }
         }
@@ -180,6 +180,17 @@ bool FTheStructureLint::LoadConfig(const FString& FilePath, FTheLintConfig& OutC
     TArray<FString> Acknowledged;
     (*Lint)->TryGetStringArrayField(TEXT("acknowledged_cross_family"), Acknowledged);
     OutConfig.AcknowledgedCrossFamily.Append(Acknowledged);
+    UE_LOG(LogTheQuartermaster,
+        Verbose,
+        TEXT("Lint.LoadConfig: content root '%s', shared '%s', family root '%s', %d forbidden prefix(es), family patterns [%s], assembly patterns [%s], %d severity override(s), %d acknowledged cross-family pair(s)"),
+        *OutConfig.ContentRoot,
+        *OutConfig.SharedFolder,
+        *OutConfig.FamilyRoot,
+        OutConfig.ForbiddenFolderPrefixes.Num(),
+        *FString::Join(OutConfig.FamilyPatterns, TEXT(", ")),
+        *FString::Join(OutConfig.AssemblyPatterns, TEXT(", ")),
+        OutConfig.RuleSeverity.Num(),
+        OutConfig.AcknowledgedCrossFamily.Num());
     return true;
 }
 
@@ -191,6 +202,7 @@ bool FTheStructureLint::Run(const FTheLintConfig& Config, FTheLintResult& OutRes
 
     TArray<FAssetData> Assets;
     Registry.GetAssetsByPath(FName(*Config.ContentRoot), Assets, /*bRecursive*/ true, /*bIncludeOnlyOnDiskAssets*/ true);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("Lint.Run: %d on-disk asset(s) under %s"), Assets.Num(), *Config.ContentRoot);
     if(Assets.IsEmpty())
     {
         OutError = FString::Printf(TEXT("the registry reported no packages under %s"), *Config.ContentRoot);
@@ -214,9 +226,7 @@ bool FTheStructureLint::Run(const FTheLintConfig& Config, FTheLintResult& OutRes
             if(PackageName.Contains(FString::Printf(TEXT("/%s"), *Forbidden)))
             {
                 const FString Rule = TEXT("forbidden-folder-prefix");
-                OutResult.Findings.Add({Rule, PackageName,
-                    FString::Printf(TEXT("a path segment starts with '%s'"), *Forbidden),
-                    SeverityOf(Rule, Config)});
+                OutResult.Findings.Add({Rule, PackageName, FString::Printf(TEXT("a path segment starts with '%s'"), *Forbidden), SeverityOf(Rule, Config)});
                 break;
             }
         }
@@ -231,9 +241,7 @@ bool FTheStructureLint::Run(const FTheLintConfig& Config, FTheLintResult& OutRes
             if(PackageName.StartsWith(FamilyPrefix))
             {
                 const FString Rule = TEXT("unrouted-package");
-                OutResult.Findings.Add({Rule, PackageName,
-                    TEXT("matches no family pattern, so it belongs to no family"),
-                    SeverityOf(Rule, Config)});
+                OutResult.Findings.Add({Rule, PackageName, TEXT("matches no family pattern, so it belongs to no family"), SeverityOf(Rule, Config)});
             }
             continue;
         }
@@ -254,9 +262,7 @@ bool FTheStructureLint::Run(const FTheLintConfig& Config, FTheLintResult& OutRes
             if(bIsShared)
             {
                 const FString Rule = TEXT("shared-depends-on-family");
-                OutResult.Findings.Add({Rule, PackageName,
-                    FString::Printf(TEXT("depends on family '%s' via %s"), *TargetFamily, *TargetName),
-                    SeverityOf(Rule, Config)});
+                OutResult.Findings.Add({Rule, PackageName, FString::Printf(TEXT("depends on family '%s' via %s"), *TargetFamily, *TargetName), SeverityOf(Rule, Config)});
                 continue;
             }
 
@@ -270,9 +276,7 @@ bool FTheStructureLint::Run(const FTheLintConfig& Config, FTheLintResult& OutRes
             if(FTheStructureLint::IsAssembly(TargetFamily, Config))
             {
                 const FString Rule = TEXT("depends-on-assembly");
-                OutResult.Findings.Add({Rule, PackageName,
-                    FString::Printf(TEXT("family '%s' reaches into assembly '%s' via %s"), *Family, *TargetFamily, *TargetName),
-                    SeverityOf(Rule, Config)});
+                OutResult.Findings.Add({Rule, PackageName, FString::Printf(TEXT("family '%s' reaches into assembly '%s' via %s"), *Family, *TargetFamily, *TargetName), SeverityOf(Rule, Config)});
                 continue;
             }
 
@@ -291,15 +295,14 @@ bool FTheStructureLint::Run(const FTheLintConfig& Config, FTheLintResult& OutRes
                 continue;
             }
             const FString Rule = TEXT("family-depends-on-family");
-            OutResult.Findings.Add({Rule, PackageName,
-                FString::Printf(TEXT("family '%s' depends on family '%s' via %s"), *Family, *TargetFamily, *TargetName),
-                SeverityOf(Rule, Config)});
+            OutResult.Findings.Add({Rule, PackageName, FString::Printf(TEXT("family '%s' depends on family '%s' via %s"), *Family, *TargetFamily, *TargetName), SeverityOf(Rule, Config)});
         }
     }
 
-    UE_LOG(LogTheQuartermaster, Display, TEXT("THEQM_LINT checked=%d errors=%d warnings=%d"),
-        OutResult.PackagesChecked,
-        OutResult.CountOf(ETheLintSeverity::Error),
-        OutResult.CountOf(ETheLintSeverity::Warning));
+    for(const FTheLintFinding& Finding : OutResult.Findings)
+    {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("Lint.Run: [%s] %s %s - %s"), Finding.Severity == ETheLintSeverity::Error ? TEXT("error") : TEXT("warning"), *Finding.Rule, *Finding.Package, *Finding.Detail);
+    }
+    UE_LOG(LogTheQuartermaster, Display, TEXT("THEQM_LINT checked=%d errors=%d warnings=%d"), OutResult.PackagesChecked, OutResult.CountOf(ETheLintSeverity::Error), OutResult.CountOf(ETheLintSeverity::Warning));
     return true;
 }

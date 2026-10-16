@@ -5,6 +5,7 @@
 #include "UObject/Class.h"
 
 #include "Placement/ThePlacementResolver.h"
+#include "TheQuartermasterModule.h"
 
 bool FThePlacementGate::IsExplainedAtFamilyRoot(const FThePlacementResolver& Resolver, const FString& Package)
 {
@@ -25,9 +26,12 @@ bool FThePlacementGate::IsExplainedAtFamilyRoot(const FThePlacementResolver& Res
     Resolver.Describe().KindDirectories.GenerateValueArray(KindFolders);
     if(!KindFolders.ContainsByPredicate([&KindFolder](const FString& Kind) { return Kind.Equals(KindFolder, ESearchCase::IgnoreCase); }))
     {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("PlacementGate: %s - folder '%s' is not one of %d kind folder(s)"), *Package, *KindFolder, KindFolders.Num());
         return false;
     }
-    return Resolver.Explain(FamilyRoot / Name).Outcome == ETheExplanationOutcome::Matched;
+    const bool bMatched = Resolver.Explain(FamilyRoot / Name).Outcome == ETheExplanationOutcome::Matched;
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("PlacementGate: %s - kind folder '%s', family root %s explains it=%d"), *Package, *KindFolder, *(FamilyRoot / Name), bMatched ? 1 : 0);
+    return bMatched;
 }
 
 FString FThePlacementGate::NameFor(const UClass* AssetClass, const FString& Name)
@@ -36,6 +40,7 @@ FString FThePlacementGate::NameFor(const UClass* AssetClass, const FString& Name
     FString LoadError;
     if(!FThePlacementResolver::LoadProjectConfig(Resolver, LoadError))
     {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("PlacementGate.NameFor: '%s' kept - taxonomy did not load: %s"), *Name, *LoadError);
         return Name;
     }
     for(const UClass* Class = AssetClass; Class; Class = Class->GetSuperClass())
@@ -43,9 +48,12 @@ FString FThePlacementGate::NameFor(const UClass* AssetClass, const FString& Name
         const FString Prefix = Resolver.PrefixForClass(Class->GetName());
         if(!Prefix.IsEmpty())
         {
-            return Resolver.NameWithPrefix(Name, Prefix);
+            const FString Prefixed = Resolver.NameWithPrefix(Name, Prefix);
+            UE_LOG(LogTheQuartermaster, Verbose, TEXT("PlacementGate.NameFor: '%s' (class %s) -> '%s' via prefix '%s' of %s"), *Name, AssetClass ? *AssetClass->GetName() : TEXT("<null>"), *Prefixed, *Prefix, *Class->GetName());
+            return Prefixed;
         }
     }
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("PlacementGate.NameFor: '%s' (class %s) kept - no prefix in its class chain"), *Name, AssetClass ? *AssetClass->GetName() : TEXT("<null>"));
     return Name;
 }
 
@@ -71,10 +79,12 @@ FString FThePlacementGate::Refusal(const TArray<FString>& PackagePaths)
         Seen.Add(Package);
         if(Resolver.IsOutsideTaxonomy(Package))
         {
+            UE_LOG(LogTheQuartermaster, Verbose, TEXT("PlacementGate.Refusal: %s - outside the taxonomy, passed"), *Package);
             continue;
         }
 
         const FThePathExplanation Explanation = Resolver.Explain(Package);
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("PlacementGate.Refusal: %s - outcome %d, %d candidate context(s), error '%s'"), *Package, static_cast<int32>(Explanation.Outcome), Explanation.CandidateContexts.Num(), *Explanation.Error);
         if(Explanation.Outcome == ETheExplanationOutcome::Matched || IsExplainedAtFamilyRoot(Resolver, Package))
         {
             continue;
@@ -94,6 +104,7 @@ FString FThePlacementGate::Refusal(const TArray<FString>& PackagePaths)
         }
     }
 
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("PlacementGate.Refusal: %d path(s) given, %d distinct, %d finding(s)"), PackagePaths.Num(), Seen.Num(), Findings.Num());
     if(Findings.IsEmpty())
     {
         return FString();

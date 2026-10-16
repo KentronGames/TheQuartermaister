@@ -33,9 +33,11 @@ bool LoadPlacement(const TMap<FString, FString>& Arguments, FThePlacementResolve
     {
         if(!ConfigPath->IsEmpty())
         {
+            UE_LOG(LogTheQuartermaster, Verbose, TEXT("Commandlet: placement config from -Config=%s"), **ConfigPath);
             return OutResolver.LoadConfig(*ConfigPath, OutError);
         }
     }
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("Commandlet: placement config from the project settings"));
     return FThePlacementResolver::LoadProjectConfig(OutResolver, OutError);
 }
 
@@ -58,6 +60,11 @@ int32 UTheQuartermasterCommandlet::Main(const FString& Params)
     TArray<FString> Switches;
     TMap<FString, FString> Arguments;
     ParseCommandLine(*Params, Tokens, Switches, Arguments);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("Commandlet: params '%s' -> %d token(s), switches [%s], %d argument(s)"), *Params, Tokens.Num(), *FString::Join(Switches, TEXT(", ")), Arguments.Num());
+    for(const TPair<FString, FString>& Argument : Arguments)
+    {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("Commandlet:   -%s=%s"), *Argument.Key, *Argument.Value);
+    }
 
     FString Report;
     FString Error;
@@ -120,10 +127,12 @@ int32 UTheQuartermasterCommandlet::Main(const FString& Params)
         {
             ConfigPath = *Explicit;
         }
+        const bool bExplicitConfig = !ConfigPath.IsEmpty();
         if(ConfigPath.IsEmpty())
         {
             ConfigPath = UTheQuartermasterSettings::ResolvedPlacementConfigPath();
         }
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("Commandlet: lint config '%s' (explicit=%d)"), *ConfigPath, bExplicitConfig ? 1 : 0);
         if(ConfigPath.IsEmpty())
         {
             return ReportFailure(TEXT("lint"), TEXT("/Game"), TEXT("no taxonomy: pass -Config=<file> or set PlacementConfigPath in the project's Editor settings"));
@@ -301,6 +310,10 @@ int32 UTheQuartermasterCommandlet::Main(const FString& Params)
                 if(Token.Split(TEXT("="), &Key, &Value))
                 {
                     Facts.Values.Add(Key.TrimStartAndEnd(), Value.TrimStartAndEnd());
+                }
+                else
+                {
+                    UE_LOG(LogTheQuartermaster, Verbose, TEXT("Commandlet: fact token '%s' has no '=', ignored"), *Token);
                 }
             }
         }

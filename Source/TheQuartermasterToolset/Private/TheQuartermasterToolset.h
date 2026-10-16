@@ -8,6 +8,8 @@
 
 #include "TheQuartermasterToolset.generated.h"
 
+DECLARE_LOG_CATEGORY_EXTERN(LogTheQuartermasterToolset, Log, All);
+
 /**
  * One placement rule as the project's taxonomy declares it.
  */

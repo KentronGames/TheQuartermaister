@@ -35,6 +35,7 @@ bool FTheRootPartition::Survey(const TArray<FString>& Exclude, FTheRootPartition
 
     TArray<FAssetData> Assets;
     Registry.GetAssetsByPath(FName(TEXT("/Game")), Assets, /*bRecursive*/ true, /*bIncludeOnlyOnDiskAssets*/ true);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("Partition.Survey: %d on-disk asset(s) under /Game, %d excluded root(s) [%s]"), Assets.Num(), Exclude.Num(), *FString::Join(Exclude, TEXT(", ")));
     if(Assets.IsEmpty())
     {
         OutError = TEXT("the registry reported no packages under /Game");
@@ -108,18 +109,27 @@ bool FTheRootPartition::Survey(const TArray<FString>& Exclude, FTheRootPartition
         Profile.bIsIsland = Profile.InboundReferencers == 0 && Profile.Packages > 0;
         OutResult.TotalBytes += Profile.Bytes;
     }
-    OutResult.Roots.Sort([](const FTheRootProfile& A, const FTheRootProfile& B)
-    {
-        return A.Packages > B.Packages;
-    });
+    OutResult.Roots.Sort([](const FTheRootProfile& A, const FTheRootProfile& B) { return A.Packages > B.Packages; });
 
     int32 Islands = 0;
     for(const FTheRootProfile& Profile : OutResult.Roots)
     {
         Islands += Profile.bIsIsland ? 1 : 0;
+        UE_LOG(LogTheQuartermaster,
+            Verbose,
+            TEXT("Partition.Survey: %s packages=%d bytes=%lld inbound=%d outbound=%d external_actors=%d island=%d"),
+            *Profile.Root,
+            Profile.Packages,
+            static_cast<long long>(Profile.Bytes),
+            Profile.InboundReferencers,
+            Profile.OutboundDependencies,
+            Profile.ExternalActors,
+            Profile.bIsIsland ? 1 : 0);
     }
 
-    UE_LOG(LogTheQuartermaster, Display, TEXT("THEQM_PARTITION roots=%d packages=%d external_actors=%d islands=%d mib=%.1f"),
+    UE_LOG(LogTheQuartermaster,
+        Display,
+        TEXT("THEQM_PARTITION roots=%d packages=%d external_actors=%d islands=%d mib=%.1f"),
         OutResult.Roots.Num(),
         OutResult.TotalPackages,
         OutResult.TotalExternalActors,
@@ -162,6 +172,7 @@ bool FTheRootPartition::WriteReport(const FTheRootPartitionResult& Result, const
     }
 
     const FString FullPath = FPaths::ConvertRelativePathToFull(FilePath);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("Partition.WriteReport: '%s' -> %s, %d root(s), %d char(s)"), *FilePath, *FullPath, Result.Roots.Num(), Serialized.Len());
     if(!FFileHelper::SaveStringToFile(Serialized, *FullPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
     {
         OutError = FString::Printf(TEXT("failed to write %s"), *FullPath);

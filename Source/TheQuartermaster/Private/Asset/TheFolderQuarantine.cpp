@@ -36,12 +36,14 @@ void RegisterRedirect(const FString& OriginFolder, const FString& QuarantineFold
 {
     const FCoreRedirect Redirect = MakeRedirect(OriginFolder + TEXT("/"), QuarantineFolder + TEXT("/"));
     FCoreRedirects::AddRedirectList(MakeArrayView(&Redirect, 1), RedirectListName);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("RegisterRedirect: %s/ -> %s/ (list %s)"), *OriginFolder, *QuarantineFolder, RedirectListName);
 }
 
 void UnregisterRedirect(const FString& OriginFolder, const FString& QuarantineFolder)
 {
     const FCoreRedirect Redirect = MakeRedirect(OriginFolder + TEXT("/"), QuarantineFolder + TEXT("/"));
     FCoreRedirects::RemoveRedirectList(MakeArrayView(&Redirect, 1), RedirectListName);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("UnregisterRedirect: %s/ -> %s/ (list %s)"), *OriginFolder, *QuarantineFolder, RedirectListName);
 }
 
 FString OriginMarkerPath(const FString& QuarantineFolder)
@@ -94,6 +96,7 @@ bool RefuseUnlessInsideQuarantine(const FString& Clean, FString& OutError)
     FString DiskRoot = GameFolderToDisk(Root);
     FPaths::NormalizeDirectoryName(DiskFolder);
     FPaths::NormalizeDirectoryName(DiskRoot);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("RefuseUnlessInsideQuarantine: %s -> disk %s, disk root %s"), *Clean, *DiskFolder, *DiskRoot);
     if(DiskFolder.Equals(DiskRoot, ESearchCase::IgnoreCase) || !FPaths::IsUnderDirectory(DiskFolder, DiskRoot))
     {
         OutError = FString::Printf(TEXT("refused: %s resolves to %s, which is not a folder inside %s"), *Clean, *DiskFolder, *DiskRoot);
@@ -107,6 +110,7 @@ int32 PackagesUnder(const FString& Folder)
     IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
     TArray<FAssetData> Assets;
     Registry.GetAssetsByPath(FName(*Folder), Assets, /*bRecursive*/ true);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("PackagesUnder: %s holds %d asset(s) in the registry"), *Folder, Assets.Num());
     return Assets.Num();
 }
 
@@ -154,6 +158,7 @@ bool RefuseUnlessQuarantinable(const FString& Folder, FString& OutError)
     FString DiskRoot = GameFolderToDisk(Root);
     FPaths::NormalizeDirectoryName(DiskFolder);
     FPaths::NormalizeDirectoryName(DiskRoot);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("RefuseUnlessQuarantinable: %s -> disk %s, quarantine root %s (disk %s)"), *Folder, *DiskFolder, *Root, *DiskRoot);
     if(DiskFolder.Equals(DiskRoot, ESearchCase::IgnoreCase) || FPaths::IsUnderDirectory(DiskRoot, DiskFolder))
     {
         OutError = FString::Printf(TEXT("refused: %s resolves to %s, which contains the quarantine root %s"), *Folder, *DiskFolder, *DiskRoot);
@@ -175,6 +180,7 @@ bool RefuseIfDirtyUnder(const FString& Folder, FString& OutError)
             Dirty.Add(It->GetName());
         }
     }
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("RefuseIfDirtyUnder: %s has %d dirty package(s)"), *Folder, Dirty.Num());
     if(Dirty.Num() > 0)
     {
         OutError = FString::Printf(TEXT("refused: %d package(s) under %s have unsaved changes - save or discard them first:%s"), Dirty.Num(), *Folder, *DescribeReferencers(Dirty));
@@ -199,6 +205,11 @@ bool UnloadAndCollect(const FString& Folder)
     {
         FText UnloadError;
         bAll = UPackageTools::UnloadPackages(ToUnload, UnloadError, /*bUnloadDirtyPackages*/ true);
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("UnloadAndCollect: %s - unloaded %d loaded package(s), all=%d, error '%s'"), *Folder, ToUnload.Num(), bAll ? 1 : 0, *UnloadError.ToString());
+    }
+    else
+    {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("UnloadAndCollect: %s - no loaded package under it"), *Folder);
     }
     CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
     return bAll;
@@ -207,6 +218,7 @@ bool UnloadAndCollect(const FString& Folder)
 bool MoveDirOnDisk(const FString& SrcAbs, const FString& DestAbs, FString& OutError)
 {
     IFileManager& FileManager = IFileManager::Get();
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("MoveDirOnDisk: %s -> %s, source exists=%d"), *SrcAbs, *DestAbs, FileManager.DirectoryExists(*SrcAbs) ? 1 : 0);
     if(!FileManager.DirectoryExists(*SrcAbs))
     {
         OutError = FString::Printf(TEXT("source folder not found on disk: %s"), *SrcAbs);
@@ -225,11 +237,13 @@ bool MoveDirOnDisk(const FString& SrcAbs, const FString& DestAbs, FString& OutEr
 
     if(FileManager.Move(*DestAbs, *SrcAbs, /*bReplace*/ false, /*bEvenIfReadOnly*/ true, /*bAttributes*/ true, /*bDoNotRetryOrError*/ true))
     {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("MoveDirOnDisk: whole-folder move succeeded"));
         return true;
     }
 
     TArray<FString> Files;
     FileManager.FindFilesRecursive(Files, *SrcAbs, TEXT("*"), /*Files*/ true, /*Directories*/ false);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("MoveDirOnDisk: whole-folder move failed, falling back to %d file-by-file move(s)"), Files.Num());
     TArray<TPair<FString, FString>> Moved;
     for(const FString& File : Files)
     {
@@ -240,6 +254,7 @@ bool MoveDirOnDisk(const FString& SrcAbs, const FString& DestAbs, FString& OutEr
         if(!FileManager.Move(*Target, *File, false, true, true, true))
         {
             OutError = FString::Printf(TEXT("failed to move %s (is it open/locked? restart the editor and retry)"), *File);
+            UE_LOG(LogTheQuartermaster, Verbose, TEXT("MoveDirOnDisk: file move %s -> %s failed after %d of %d file(s); rolling %d back"), *File, *Target, Moved.Num(), Files.Num(), Moved.Num());
             TArray<FString> Stranded;
             for(const TPair<FString, FString>& Pair : Moved)
             {
@@ -259,12 +274,14 @@ bool MoveDirOnDisk(const FString& SrcAbs, const FString& DestAbs, FString& OutEr
                 UE_LOG(LogTheQuartermaster, Error, TEXT("%s"), *OutError);
                 return false;
             }
+            UE_LOG(LogTheQuartermaster, Verbose, TEXT("MoveDirOnDisk: rollback put all %d file(s) back; removing %s"), Moved.Num(), *DestAbs);
             FileManager.DeleteDirectory(*DestAbs, /*RequireExists*/ false, /*Tree*/ true);
             return false;
         }
         Moved.Emplace(File, Target);
     }
     FileManager.DeleteDirectory(*SrcAbs, /*RequireExists*/ false, /*Tree*/ true);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("MoveDirOnDisk: moved %d file(s) one by one; source left on disk=%d"), Moved.Num(), FileManager.DirectoryExists(*SrcAbs) ? 1 : 0);
     return true;
 }
 }
@@ -278,20 +295,25 @@ bool FTheFolderQuarantine::PlanMoveToQuarantine(const FString& SourceFolder, FSt
 {
     FString Folder = SourceFolder;
     Folder.RemoveFromEnd(TEXT("/"));
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("PlanMoveToQuarantine: source '%s' -> clean '%s'"), *SourceFolder, *Folder);
     if(!RefuseUnlessQuarantinable(Folder, OutError))
     {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("PlanMoveToQuarantine: refused - %s"), *OutError);
         return false;
     }
 
     const FString Target = QuarantineRoot() / FPaths::GetCleanFilename(Folder);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("PlanMoveToQuarantine: leaf '%s', target %s (disk %s)"), *FPaths::GetCleanFilename(Folder), *Target, *GameFolderToDisk(Target));
     if(IFileManager::Get().DirectoryExists(*GameFolderToDisk(Target)))
     {
         OutError = FString::Printf(TEXT("%s already exists in quarantine"), *Target);
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("PlanMoveToQuarantine: refused - %s"), *OutError);
         return false;
     }
     if(!IFileManager::Get().DirectoryExists(*GameFolderToDisk(Folder)))
     {
         OutError = FString::Printf(TEXT("%s does not exist on disk"), *Folder);
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("PlanMoveToQuarantine: refused - %s (disk %s)"), *OutError, *GameFolderToDisk(Folder));
         return false;
     }
 
@@ -312,8 +334,10 @@ bool FTheFolderQuarantine::MoveToQuarantine(const FString& SourceFolder, FString
 
     FString Folder = SourceFolder;
     Folder.RemoveFromEnd(TEXT("/"));
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("MoveToQuarantine: source '%s' -> clean '%s'"), *SourceFolder, *Folder);
     if(!RefuseUnlessQuarantinable(Folder, OutError))
     {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("MoveToQuarantine: refused - %s"), *OutError);
         return false;
     }
 
@@ -321,30 +345,37 @@ bool FTheFolderQuarantine::MoveToQuarantine(const FString& SourceFolder, FString
     const FString Target = QuarantineRoot() / Leaf;
     const FString SrcAbs = GameFolderToDisk(Folder);
     const FString DestAbs = GameFolderToDisk(Target);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("MoveToQuarantine: leaf '%s', root %s, target %s; disk %s -> %s; %d asset(s) in the registry"), *Leaf, *QuarantineRoot(), *Target, *SrcAbs, *DestAbs, PackagesUnder(Folder));
     if(IFileManager::Get().DirectoryExists(*DestAbs))
     {
         OutError = FString::Printf(TEXT("%s already exists in quarantine"), *Target);
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("MoveToQuarantine: refused - %s"), *OutError);
         return false;
     }
 
     if(!RefuseIfDirtyUnder(Folder, OutError))
     {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("MoveToQuarantine: refused - %s"), *OutError);
         return false;
     }
     if(!UnloadAndCollect(Folder))
     {
         OutError = FString::Printf(TEXT("refused to quarantine %s - a package under it could not be unloaded, and moving files the editor still holds splits the pack. Close what is open (or restart the editor) and retry"), *Folder);
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("MoveToQuarantine: refused - unload failed for %s"), *Folder);
         return false;
     }
 
     if(!MoveDirOnDisk(SrcAbs, DestAbs, OutError))
     {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("MoveToQuarantine: disk move failed - %s"), *OutError);
         return false;
     }
 
     IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
 
-    if(!FFileHelper::SaveStringToFile(Folder, *OriginMarkerPath(Target), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+    const bool bMarkerSaved = FFileHelper::SaveStringToFile(Folder, *OriginMarkerPath(Target), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("MoveToQuarantine: origin marker %s records '%s', saved=%d"), *OriginMarkerPath(Target), *Folder, bMarkerSaved ? 1 : 0);
+    if(!bMarkerSaved)
     {
         FString RollbackError;
         if(!MoveDirOnDisk(DestAbs, SrcAbs, RollbackError))
@@ -362,6 +393,7 @@ bool FTheFolderQuarantine::MoveToQuarantine(const FString& SourceFolder, FString
 
     Registry.ScanPathsSynchronous({Target}, /*bForceRescan*/ true);
     Registry.ScanPathsSynchronous({Folder}, /*bForceRescan*/ true);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("MoveToQuarantine: rescanned - %d asset(s) now under %s, %d left under %s"), PackagesUnder(Target), *Target, PackagesUnder(Folder), *Folder);
 
     OutReport = FString::Printf(TEXT("moved %s -> %s\nredirect %s/ -> %s/ added (no repo config touched)%s"),
         *Folder,
@@ -377,13 +409,16 @@ bool FTheFolderQuarantine::PlanDeleteFromQuarantine(const FString& Folder, FStri
 {
     FString Clean = Folder;
     Clean.RemoveFromEnd(TEXT("/"));
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("PlanDeleteFromQuarantine: folder '%s' -> clean '%s'"), *Folder, *Clean);
     if(!RefuseUnlessInsideQuarantine(Clean, OutError))
     {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("PlanDeleteFromQuarantine: refused - %s"), *OutError);
         return false;
     }
     if(!IFileManager::Get().DirectoryExists(*GameFolderToDisk(Clean)))
     {
         OutError = FString::Printf(TEXT("%s does not exist on disk"), *Clean);
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("PlanDeleteFromQuarantine: refused - %s (disk %s)"), *OutError, *GameFolderToDisk(Clean));
         return false;
     }
 
@@ -392,6 +427,7 @@ bool FTheFolderQuarantine::PlanDeleteFromQuarantine(const FString& Folder, FStri
     Origin.TrimStartAndEndInline();
 
     const TArray<FString> Referencers = FTheFolderQuarantine::ExternalReferencersOf(Clean);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("PlanDeleteFromQuarantine: %s - origin marker read=%d '%s', %d external referencer(s)"), *Clean, bHasOrigin ? 1 : 0, *Origin, Referencers.Num());
 
     OutReport = FString::Printf(TEXT("PLAN: delete %s from disk (%d asset(s)) and drop its redirect%s.\nNothing under the quarantine root exists anywhere else - RestoreFromQuarantine first if any of it is still wanted.%s"),
         *Clean,
@@ -430,6 +466,11 @@ TArray<FString> FTheFolderQuarantine::ExternalReferencersOf(const FString& Folde
 
     TArray<FString> Sorted = Outside.Array();
     Sorted.Sort();
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("ExternalReferencersOf: %s - %d asset(s) scanned, %d referencer(s) outside %s"), *Clean, Assets.Num(), Sorted.Num(), *QuarantinePrefix);
+    for(const FString& Referencer : Sorted)
+    {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("ExternalReferencersOf:   %s"), *Referencer);
+    }
     return Sorted;
 }
 
@@ -437,20 +478,24 @@ bool FTheFolderQuarantine::DeleteFromQuarantine(const FString& Folder, bool bFor
 {
     FString Clean = Folder;
     Clean.RemoveFromEnd(TEXT("/"));
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("DeleteFromQuarantine: folder '%s' -> clean '%s', bForce=%d"), *Folder, *Clean, bForce ? 1 : 0);
     if(!RefuseUnlessInsideQuarantine(Clean, OutError))
     {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("DeleteFromQuarantine: refused - %s"), *OutError);
         return false;
     }
 
     if(!IFileManager::Get().DirectoryExists(*GameFolderToDisk(Clean)))
     {
         OutError = FString::Printf(TEXT("%s does not exist on disk - nothing was deleted"), *Clean);
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("DeleteFromQuarantine: refused - %s (disk %s)"), *OutError, *GameFolderToDisk(Clean));
         return false;
     }
 
     if(!bForce)
     {
         const TArray<FString> Referencers = ExternalReferencersOf(Clean);
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("DeleteFromQuarantine: %d external referencer(s) without bForce"), Referencers.Num());
         if(!Referencers.IsEmpty())
         {
             OutError = FString::Printf(
@@ -465,16 +510,19 @@ bool FTheFolderQuarantine::DeleteFromQuarantine(const FString& Folder, bool bFor
     FString Origin;
     const bool bHasOrigin = FFileHelper::LoadFileToString(Origin, *OriginMarkerPath(Clean));
     Origin.TrimStartAndEndInline();
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("DeleteFromQuarantine: origin marker read=%d '%s', %d asset(s) to delete"), bHasOrigin ? 1 : 0, *Origin, PackagesUnder(Clean));
 
     if(!UnloadAndCollect(Clean))
     {
         OutError = FString::Printf(TEXT("refused to delete %s - a package under it could not be unloaded, and deleting a folder the editor still holds leaves half of it behind. Close what is open (or restart the editor) and retry"), *Clean);
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("DeleteFromQuarantine: refused - unload failed for %s"), *Clean);
         return false;
     }
 
     const FString DiskPath = GameFolderToDisk(Clean);
-    IFileManager::Get().DeleteDirectory(*DiskPath, /*RequireExists*/ false, /*Tree*/ true);
+    const bool bDeleteReported = IFileManager::Get().DeleteDirectory(*DiskPath, /*RequireExists*/ false, /*Tree*/ true);
     const bool bDiskGone = !IFileManager::Get().DirectoryExists(*DiskPath);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("DeleteFromQuarantine: DeleteDirectory %s returned %d, gone from disk=%d"), *DiskPath, bDeleteReported ? 1 : 0, bDiskGone ? 1 : 0);
     FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get().ScanPathsSynchronous({QuarantineRoot()}, /*bForceRescan*/ true);
 
     if(!bDiskGone)
@@ -483,6 +531,7 @@ bool FTheFolderQuarantine::DeleteFromQuarantine(const FString& Folder, bool bFor
         return false;
     }
 
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("DeleteFromQuarantine: drop redirect=%d"), bHasOrigin && !Origin.IsEmpty() ? 1 : 0);
     if(bHasOrigin && !Origin.IsEmpty())
     {
         UnregisterRedirect(Origin, Clean);
@@ -499,8 +548,10 @@ bool FTheFolderQuarantine::RestoreFromQuarantine(const FString& Folder, FString&
 
     FString Clean = Folder;
     Clean.RemoveFromEnd(TEXT("/"));
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("RestoreFromQuarantine: folder '%s' -> clean '%s'"), *Folder, *Clean);
     if(!RefuseUnlessInsideQuarantine(Clean, OutError))
     {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("RestoreFromQuarantine: refused - %s"), *OutError);
         return false;
     }
 
@@ -508,9 +559,11 @@ bool FTheFolderQuarantine::RestoreFromQuarantine(const FString& Folder, FString&
     if(!FFileHelper::LoadFileToString(Origin, *OriginMarkerPath(Clean)))
     {
         OutError = FString::Printf(TEXT("no origin marker in %s - nothing records where this pack came from, so it cannot be restored automatically"), *Clean);
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("RestoreFromQuarantine: refused - marker %s unreadable"), *OriginMarkerPath(Clean));
         return false;
     }
     Origin.TrimStartAndEndInline();
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("RestoreFromQuarantine: marker records origin '%s' (starts /Game/=%d, plain segments=%d)"), *Origin, Origin.StartsWith(TEXT("/Game/")) ? 1 : 0, HasOnlyPlainSegments(Origin) ? 1 : 0);
     if(Origin.IsEmpty() || !Origin.StartsWith(TEXT("/Game/")) || !HasOnlyPlainSegments(Origin))
     {
         OutError = FString::Printf(TEXT("the origin marker in %s does not record a /Game/ folder: '%s'"), *Clean, *Origin);
@@ -519,33 +572,40 @@ bool FTheFolderQuarantine::RestoreFromQuarantine(const FString& Folder, FString&
 
     const FString SrcAbs = GameFolderToDisk(Clean);
     const FString DestAbs = GameFolderToDisk(Origin);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("RestoreFromQuarantine: disk %s -> %s; %d asset(s) in the registry"), *SrcAbs, *DestAbs, PackagesUnder(Clean));
     if(IFileManager::Get().DirectoryExists(*DestAbs))
     {
         OutError = FString::Printf(TEXT("%s already exists - the pack's original home is occupied, so restoring would merge two folders"), *Origin);
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("RestoreFromQuarantine: refused - %s"), *OutError);
         return false;
     }
 
     if(!RefuseIfDirtyUnder(Clean, OutError))
     {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("RestoreFromQuarantine: refused - %s"), *OutError);
         return false;
     }
     if(!UnloadAndCollect(Clean))
     {
         OutError = FString::Printf(TEXT("refused to restore %s - a package under it could not be unloaded, and moving files the editor still holds splits the pack. Close what is open (or restart the editor) and retry"), *Clean);
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("RestoreFromQuarantine: refused - unload failed for %s"), *Clean);
         return false;
     }
 
     if(!MoveDirOnDisk(SrcAbs, DestAbs, OutError))
     {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("RestoreFromQuarantine: disk move failed - %s"), *OutError);
         return false;
     }
 
     UnregisterRedirect(Origin, Clean);
-    IFileManager::Get().Delete(*(DestAbs / OriginMarkerName), /*RequireExists*/ false, /*EvenReadOnly*/ true);
+    const bool bMarkerDeleted = IFileManager::Get().Delete(*(DestAbs / OriginMarkerName), /*RequireExists*/ false, /*EvenReadOnly*/ true);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("RestoreFromQuarantine: marker %s delete returned %d"), *(DestAbs / OriginMarkerName), bMarkerDeleted ? 1 : 0);
 
     IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
     Registry.ScanPathsSynchronous({Origin}, /*bForceRescan*/ true);
     Registry.ScanPathsSynchronous({Clean}, /*bForceRescan*/ true);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("RestoreFromQuarantine: rescanned - %d asset(s) now under %s, %d left under %s"), PackagesUnder(Origin), *Origin, PackagesUnder(Clean), *Clean);
 
     OutReport = FString::Printf(TEXT("restored %s -> %s\nredirect %s/ -> %s/ dropped, origin marker removed%s"),
         *Clean,
@@ -564,15 +624,18 @@ bool FTheFolderQuarantine::DropQuarantineBookkeepingAfterPackagesLeft(const FStr
     FString Refusal;
     if(!RefuseUnlessInsideQuarantine(Clean, Refusal))
     {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("DropQuarantineBookkeepingAfterPackagesLeft: %s skipped - %s"), *Clean, *Refusal);
         return false;
     }
 
     FString Origin;
     if(!FFileHelper::LoadFileToString(Origin, *OriginMarkerPath(Clean)))
     {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("DropQuarantineBookkeepingAfterPackagesLeft: %s skipped - no marker at %s"), *Clean, *OriginMarkerPath(Clean));
         return false;
     }
     Origin.TrimStartAndEndInline();
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("DropQuarantineBookkeepingAfterPackagesLeft: %s - marker origin '%s'"), *Clean, *Origin);
     if(!Origin.IsEmpty())
     {
         UnregisterRedirect(Origin, Clean);
@@ -590,10 +653,12 @@ bool FTheFolderQuarantine::HoldsNothingButTheOriginMarker(const FString& Folder)
     FString Refusal;
     if(!RefuseUnlessInsideQuarantine(Clean, Refusal))
     {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("HoldsNothingButTheOriginMarker: %s -> false (%s)"), *Clean, *Refusal);
         return false;
     }
     TArray<FString> Files;
     IFileManager::Get().FindFilesRecursive(Files, *GameFolderToDisk(Clean), TEXT("*"), /*Files*/ true, /*Directories*/ false);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("HoldsNothingButTheOriginMarker: %s holds %d file(s), first '%s'"), *Clean, Files.Num(), Files.IsEmpty() ? TEXT("") : *FPaths::GetCleanFilename(Files[0]));
     return Files.Num() == 1 && FPaths::GetCleanFilename(Files[0]) == OriginMarkerName;
 }
 
@@ -602,6 +667,14 @@ bool FTheFolderQuarantine::VerifyRestoredFromQuarantine(const FString& SourceFol
     FString Source = SourceFolder;
     Source.RemoveFromEnd(TEXT("/"));
     const FString Quarantined = QuarantineRoot() / FPaths::GetCleanFilename(Source);
+    UE_LOG(LogTheQuartermaster,
+        Verbose,
+        TEXT("VerifyRestoredFromQuarantine: source %s exists=%d, quarantined %s exists=%d, marker at source=%d"),
+        *Source,
+        IFileManager::Get().DirectoryExists(*GameFolderToDisk(Source)) ? 1 : 0,
+        *Quarantined,
+        IFileManager::Get().DirectoryExists(*GameFolderToDisk(Quarantined)) ? 1 : 0,
+        IFileManager::Get().FileExists(*(GameFolderToDisk(Source) / OriginMarkerName)) ? 1 : 0);
 
     if(!IFileManager::Get().DirectoryExists(*GameFolderToDisk(Source)))
     {
@@ -621,6 +694,7 @@ bool FTheFolderQuarantine::VerifyRestoredFromQuarantine(const FString& SourceFol
 
     const FCoreRedirectObjectName Probe(*(Source / TEXT("Probe")));
     const FCoreRedirectObjectName Resolved = FCoreRedirects::GetRedirectedName(ECoreRedirectFlags::Type_Package, Probe);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("VerifyRestoredFromQuarantine: redirect probe %s resolves to %s"), *Probe.ToString(), *Resolved.ToString());
     if(Resolved != Probe)
     {
         OutError = FString::Printf(TEXT("a quarantine redirect is still live: %s resolves to %s"), *Probe.ToString(), *Resolved.ToString());
@@ -636,6 +710,13 @@ bool FTheFolderQuarantine::VerifyQuarantined(const FString& SourceFolder, FStrin
     FString Source = SourceFolder;
     Source.RemoveFromEnd(TEXT("/"));
     const FString Target = QuarantineRoot() / FPaths::GetCleanFilename(Source);
+    UE_LOG(LogTheQuartermaster,
+        Verbose,
+        TEXT("VerifyQuarantined: source %s exists=%d, target %s exists=%d"),
+        *Source,
+        IFileManager::Get().DirectoryExists(*GameFolderToDisk(Source)) ? 1 : 0,
+        *Target,
+        IFileManager::Get().DirectoryExists(*GameFolderToDisk(Target)) ? 1 : 0);
 
     if(!IFileManager::Get().DirectoryExists(*GameFolderToDisk(Target)))
     {
@@ -654,6 +735,7 @@ bool FTheFolderQuarantine::VerifyQuarantined(const FString& SourceFolder, FStrin
         return false;
     }
     Recorded.TrimStartAndEndInline();
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("VerifyQuarantined: marker records '%s', expected '%s'"), *Recorded, *Source);
     if(Recorded != Source)
     {
         OutError = FString::Printf(TEXT("origin marker records %s, expected %s"), *Recorded, *Source);
@@ -669,8 +751,16 @@ bool FTheFolderQuarantine::VerifyQuarantineDeleted(const FString& Folder, FStrin
     Clean.RemoveFromEnd(TEXT("/"));
     if(!RefuseUnlessInsideQuarantine(Clean, OutError))
     {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("VerifyQuarantineDeleted: refused - %s"), *OutError);
         return false;
     }
+    UE_LOG(LogTheQuartermaster,
+        Verbose,
+        TEXT("VerifyQuarantineDeleted: root %s exists=%d, %s exists=%d"),
+        *QuarantineRoot(),
+        IFileManager::Get().DirectoryExists(*GameFolderToDisk(QuarantineRoot())) ? 1 : 0,
+        *Clean,
+        IFileManager::Get().DirectoryExists(*GameFolderToDisk(Clean)) ? 1 : 0);
     if(!IFileManager::Get().DirectoryExists(*GameFolderToDisk(QuarantineRoot())))
     {
         OutError = FString::Printf(TEXT("cannot tell: the quarantine root %s does not exist on disk, so the absence of %s says nothing"), *QuarantineRoot(), *Clean);
@@ -691,11 +781,14 @@ void FTheFolderQuarantine::RehydrateRedirects()
     const FString QuarantineDiskRoot = GameFolderToDisk(Root);
     if(!IFileManager::Get().DirectoryExists(*QuarantineDiskRoot))
     {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("RehydrateRedirects: quarantine root %s (disk %s) absent - nothing to rehydrate"), *Root, *QuarantineDiskRoot);
         return;
     }
 
     TArray<FString> Leaves;
     IFileManager::Get().FindFiles(Leaves, *(QuarantineDiskRoot / TEXT("*")), /*Files*/ false, /*Directories*/ true);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("RehydrateRedirects: %d folder(s) under %s"), Leaves.Num(), *Root);
+    int32 Registered = 0;
     for(const FString& Leaf : Leaves)
     {
         const FString QuarantineFolder = Root / Leaf;
@@ -706,7 +799,17 @@ void FTheFolderQuarantine::RehydrateRedirects()
             if(!Origin.IsEmpty())
             {
                 RegisterRedirect(Origin, QuarantineFolder);
+                ++Registered;
+            }
+            else
+            {
+                UE_LOG(LogTheQuartermaster, Verbose, TEXT("RehydrateRedirects: %s - marker is empty, skipped"), *QuarantineFolder);
             }
         }
+        else
+        {
+            UE_LOG(LogTheQuartermaster, Verbose, TEXT("RehydrateRedirects: %s - no marker, skipped"), *QuarantineFolder);
+        }
     }
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("RehydrateRedirects: %d redirect(s) registered"), Registered);
 }

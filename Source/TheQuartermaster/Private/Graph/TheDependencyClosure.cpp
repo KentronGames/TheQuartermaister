@@ -30,6 +30,7 @@ bool FTheDependencyClosure::IsExternalActorPackage(const FString& PackageName)
 
 bool FTheDependencyClosure::Solve(const FTheClosureRequest& Request, FTheClosureResult& OutResult, FString& OutError)
 {
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("Closure.Solve: %d root(s) [%s], text references=%d"), Request.Roots.Num(), *FString::Join(Request.Roots, TEXT(", ")), Request.bIncludeTextReferences ? 1 : 0);
     if(Request.Roots.IsEmpty())
     {
         OutError = TEXT("no roots given");
@@ -50,6 +51,7 @@ bool FTheDependencyClosure::Solve(const FTheClosureRequest& Request, FTheClosure
 
         TArray<FAssetData> Assets;
         Registry.GetAssetsByPath(FName(*Clean), Assets, /*bRecursive*/ true, /*bIncludeOnlyOnDiskAssets*/ true);
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("Closure.Solve: root '%s' -> '%s' holds %d on-disk asset(s)"), *Root, *Clean, Assets.Num());
         if(Assets.IsEmpty())
         {
             OutError = FString::Printf(TEXT("root holds no packages: %s"), *Clean);
@@ -68,6 +70,7 @@ bool FTheDependencyClosure::Solve(const FTheClosureRequest& Request, FTheClosure
         }
     }
 
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("Closure.Solve: %d candidate package(s), %d external actor package(s) excluded"), Candidates.Num(), OutResult.ExternalActorsExcluded);
     if(Candidates.IsEmpty())
     {
         OutError = TEXT("every candidate was an external actor package; nothing to solve");
@@ -84,6 +87,7 @@ bool FTheDependencyClosure::Solve(const FTheClosureRequest& Request, FTheClosure
         Registry.GetReferencers(Package, Found, UE::AssetRegistry::EDependencyCategory::All, UE::AssetRegistry::FDependencyQuery());
         Found.RemoveAll([&Package](const FName& Value) { return Value == Package; });
         Found.Sort(FNameLexicalLess());
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("Closure.Solve: %s has %d referencer(s)"), *Package.ToString(), Found.Num());
         Referencers.Add(Package, MoveTemp(Found));
     }
 
@@ -95,6 +99,7 @@ bool FTheDependencyClosure::Solve(const FTheClosureRequest& Request, FTheClosure
         FTheTextScanResult TextScan;
         if(!FTheTextReferenceScan::Scan(TextScan, OutError))
         {
+            UE_LOG(LogTheQuartermaster, Verbose, TEXT("Closure.Solve: text scan failed - %s"), *OutError);
             return false;
         }
         static const FName TextHolder(TEXT("__product_text__"));
@@ -104,6 +109,7 @@ bool FTheDependencyClosure::Solve(const FTheClosureRequest& Request, FTheClosure
             {
                 Referencers[Package].Add(TextHolder);
                 OutResult.TextHeldBy.Add(Package, *Files);
+                UE_LOG(LogTheQuartermaster, Verbose, TEXT("Closure.Solve: %s text-held by %d file(s): %s"), *Package.ToString(), Files->Num(), *FString::Join(*Files, TEXT(", ")));
             }
         }
     }
@@ -121,6 +127,7 @@ bool FTheDependencyClosure::Solve(const FTheClosureRequest& Request, FTheClosure
                 Dropped.Add(Package);
             }
         }
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("Closure.Solve: fixpoint round %d drops %d package(s), %d safe before it"), OutResult.FixpointRounds + 1, Dropped.Num(), Safe.Num());
         if(Dropped.IsEmpty())
         {
             break;
@@ -155,6 +162,7 @@ bool FTheDependencyClosure::Solve(const FTheClosureRequest& Request, FTheClosure
                 Holders.FindOrAdd(TopLevelRootOf(Source.ToString()))++;
             }
         }
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("Closure.Solve: held %s - %d outside referencer(s)"), *Package.ToString(), Outside.Num());
         OutResult.HeldBy.Add(Package, MoveTemp(Outside));
     }
 
@@ -162,12 +170,11 @@ bool FTheDependencyClosure::Solve(const FTheClosureRequest& Request, FTheClosure
     {
         OutResult.HoldingRoots.Add(Pair);
     }
-    OutResult.HoldingRoots.Sort([](const TPair<FString, int32>& A, const TPair<FString, int32>& B)
-    {
-        return A.Value > B.Value;
-    });
+    OutResult.HoldingRoots.Sort([](const TPair<FString, int32>& A, const TPair<FString, int32>& B) { return A.Value > B.Value; });
 
-    UE_LOG(LogTheQuartermaster, Display, TEXT("THEQM_CLOSURE candidates=%d safe=%d held=%d text_held=%d rounds=%d external_actors_excluded=%d"),
+    UE_LOG(LogTheQuartermaster,
+        Display,
+        TEXT("THEQM_CLOSURE candidates=%d safe=%d held=%d text_held=%d rounds=%d external_actors_excluded=%d"),
         OutResult.Candidates.Num(),
         OutResult.Safe.Num(),
         OutResult.Held.Num(),
@@ -245,6 +252,7 @@ bool FTheDependencyClosure::WriteReport(const FTheClosureResult& Result, const F
     }
 
     const FString FullPath = FPaths::ConvertRelativePathToFull(FilePath);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("Closure.WriteReport: '%s' -> %s, %d char(s), safe=%d held=%d text_held=%d"), *FilePath, *FullPath, Serialized.Len(), Result.Safe.Num(), Result.Held.Num(), Result.TextHeldBy.Num());
     if(!FFileHelper::SaveStringToFile(Serialized, *FullPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
     {
         OutError = FString::Printf(TEXT("failed to write %s"), *FullPath);

@@ -15,6 +15,7 @@ namespace
 {
 FThePlacementResult Reject(const FString& Error)
 {
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("Placement.Resolve: rejected - %s"), *Error);
     FThePlacementResult Result;
     Result.Outcome = EThePlacementOutcome::Rejected;
     Result.Error = Error;
@@ -52,7 +53,9 @@ void ReadStringMap(const TSharedPtr<FJsonObject>& Source, const FString& Field, 
 bool FThePlacementResolver::LoadConfig(const FString& FilePath, FString& OutError)
 {
     FString Json;
-    if(!FFileHelper::LoadFileToString(Json, *FPaths::ConvertRelativePathToFull(FilePath)))
+    const bool bRead = FFileHelper::LoadFileToString(Json, *FPaths::ConvertRelativePathToFull(FilePath));
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("Placement.LoadConfig: '%s' -> %s, read=%d, %d char(s)"), *FilePath, *FPaths::ConvertRelativePathToFull(FilePath), bRead ? 1 : 0, Json.Len());
+    if(!bRead)
     {
         OutError = FString::Printf(TEXT("cannot read placement config: %s"), *FilePath);
         return false;
@@ -63,6 +66,7 @@ bool FThePlacementResolver::LoadConfig(const FString& FilePath, FString& OutErro
 bool FThePlacementResolver::LoadProjectConfig(FThePlacementResolver& OutResolver, FString& OutError)
 {
     const FString ConfigPath = UTheQuartermasterSettings::ResolvedPlacementConfigPath();
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("Placement.LoadProjectConfig: resolved config path '%s'"), *ConfigPath);
     if(ConfigPath.IsEmpty())
     {
         OutError = TEXT("no placement config: set PlacementConfigPath in the project's Editor settings");
@@ -134,10 +138,12 @@ bool FThePlacementResolver::LoadConfigFromString(const FString& Json, FString& O
         if(Rule.Context.IsEmpty() || Rule.Folder.IsEmpty())
         {
             OutError = TEXT("every placement rule needs a context and a folder");
+            UE_LOG(LogTheQuartermaster, Verbose, TEXT("Placement.LoadConfig: rule %d has context '%s', folder '%s'"), Rules.Num(), *Rule.Context, *Rule.Folder);
             return false;
         }
         if(!ReadFacts(*Object, Rule, OutError) || !ReadSub(*Object, Rule, OutError))
         {
+            UE_LOG(LogTheQuartermaster, Verbose, TEXT("Placement.LoadConfig: rule '%s' failed - %s"), *Rule.Context, *OutError);
             return false;
         }
         ReadNameRefusals(*Object, Rule);
@@ -168,6 +174,7 @@ bool FThePlacementResolver::LoadConfigFromString(const FString& Json, FString& O
         }
     }
 
+    const bool bContextsFromRules = Contexts.IsEmpty();
     if(Contexts.IsEmpty())
     {
         for(const FRule& Rule : Rules)
@@ -175,6 +182,20 @@ bool FThePlacementResolver::LoadConfigFromString(const FString& Json, FString& O
             Contexts.AddUnique(Rule.Context);
         }
     }
+    UE_LOG(LogTheQuartermaster,
+        Verbose,
+        TEXT("Placement.LoadConfig: content root %s, %d plugin root(s), %d rule(s), %d redirect(s), %d context(s)%s, %d prefix(es), %d kind dir(s), %d class prefix(es), %d unprefixed context(s), %d top-level exception(s)"),
+        *ContentRoot,
+        PluginContentRoots.Num(),
+        Rules.Num(),
+        Redirects.Num(),
+        Contexts.Num(),
+        bContextsFromRules ? TEXT(" (taken from the rules)") : TEXT(""),
+        PrefixKinds.Num(),
+        KindDirectories.Num(),
+        ClassPrefixes.Num(),
+        UnprefixedContexts.Num(),
+        TopLevelExceptions.Num());
     return true;
 }
 
@@ -338,6 +359,11 @@ FString FThePlacementResolver::ParsePrefix(const FString& Name) const
 
 FThePlacementResult FThePlacementResolver::Resolve(const FThePlacementFacts& Facts) const
 {
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("Placement.Resolve: name '%s', context '%s', %d fact(s), %d rule(s) loaded"), *Facts.Name, *Facts.Context, Facts.Values.Num(), Rules.Num());
+    for(const TPair<FString, FString>& Pair : Facts.Values)
+    {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("Placement.Resolve:   fact %s = '%s'"), *Pair.Key, *Pair.Value);
+    }
     if(Rules.IsEmpty())
     {
         return Reject(TEXT("no placement config loaded"));
@@ -359,6 +385,7 @@ FThePlacementResult FThePlacementResolver::Resolve(const FThePlacementFacts& Fac
     }
 
     const bool bContextTakesNoPrefix = UnprefixedContexts.Contains(Facts.Context);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("Placement.Resolve: prefix '%s', kind '%s', context takes no prefix=%d"), *Result.Prefix, *Result.Kind, bContextTakesNoPrefix ? 1 : 0);
     if(Result.Prefix.IsEmpty() && !bContextTakesNoPrefix)
     {
         int32 Underscore = INDEX_NONE;
@@ -421,6 +448,15 @@ FThePlacementResult FThePlacementResolver::Resolve(const FThePlacementFacts& Fac
 
     TArray<FString> TemplateSegments;
     Matched->Folder.ParseIntoArray(TemplateSegments, TEXT("/"), /*InCullEmpty*/ true);
+    UE_LOG(LogTheQuartermaster,
+        Verbose,
+        TEXT("Placement.Resolve: rule '%s' template '%s' (%d segment(s)), sub declared=%d '%s', %d required fact(s) missing so far"),
+        *Matched->Context,
+        *Matched->Folder,
+        TemplateSegments.Num(),
+        bSubDeclared ? 1 : 0,
+        *Sub,
+        Missing.Num());
     TArray<FString> Built;
     for(const FString& Segment : TemplateSegments)
     {
@@ -483,6 +519,7 @@ FThePlacementResult FThePlacementResolver::Resolve(const FThePlacementFacts& Fac
     if(!Missing.IsEmpty())
     {
         Missing.Sort();
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("Placement.Resolve: needs %d fact(s): %s (folder so far '%s')"), Missing.Num(), *FString::Join(Missing, TEXT(", ")), *Folder);
         Result.Outcome = EThePlacementOutcome::NeedsFacts;
         Result.MissingFacts = MoveTemp(Missing);
         return Result;
@@ -491,6 +528,7 @@ FThePlacementResult FThePlacementResolver::Resolve(const FThePlacementFacts& Fac
     Result.Outcome = EThePlacementOutcome::Placed;
     Result.Folder = Folder;
     Result.PackagePath = FString::Printf(TEXT("%s/%s/%s"), *ContentRoot, *Folder, *Facts.Name);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("Placement.Resolve: placed at %s"), *Result.PackagePath);
     return Result;
 }
 
@@ -701,6 +739,7 @@ FThePathExplanation FThePlacementResolver::Explain(const FString& PackagePath) c
 {
     FThePathExplanation Explanation;
 
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("Placement.Explain: '%s', %d rule(s) loaded"), *PackagePath, Rules.Num());
     if(Rules.IsEmpty())
     {
         Explanation.Error = TEXT("no placement config loaded");
@@ -719,11 +758,13 @@ FThePathExplanation FThePlacementResolver::Explain(const FString& PackagePath) c
             *PackagePath,
             *ContentRoot,
             PluginContentRoots.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(" or a plugin content root (%s)"), *FString::Join(PluginContentRoots, TEXT(", "))));
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("Placement.Explain: trimmed '%s' is outside content root %s"), *Trimmed, *ContentRoot);
         return Explanation;
     }
 
     TArray<FString> Segments;
     Trimmed.RightChop(ContentRoot.Len() + 1).ParseIntoArray(Segments, TEXT("/"), /*InCullEmpty*/ true);
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("Placement.Explain: trimmed '%s', %d segment(s) below the root"), *Trimmed, Segments.Num());
     if(Segments.Num() < 2)
     {
         Explanation.Error = FString::Printf(TEXT("'%s' names no folder below %s, so no rule can apply"), *PackagePath, *ContentRoot);
@@ -745,24 +786,31 @@ FThePathExplanation FThePlacementResolver::Explain(const FString& PackagePath) c
         int32 LiteralSegments = 0;
     };
 
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("Placement.Explain: name '%s', folder '%s', prefix '%s', kind '%s'"), *Explanation.Name, *Explanation.Folder, *Explanation.Prefix, *Explanation.Kind);
+
     TArray<FMatch> Matches;
     for(const FRule& Rule : Rules)
     {
         if(Explanation.Prefix.IsEmpty() && !UnprefixedContexts.Contains(Rule.Context))
         {
+            UE_LOG(LogTheQuartermaster, Verbose, TEXT("Placement.Explain:   rule '%s' skipped - name has no prefix and the context requires one"), *Rule.Context);
             continue;
         }
         if(Rule.NameRefuses.ContainsByPredicate([&Explanation](const FNameRefusal& Refusal) { return Explanation.Name.StartsWith(Refusal.StartsWith, ESearchCase::CaseSensitive); }))
         {
+            UE_LOG(LogTheQuartermaster, Verbose, TEXT("Placement.Explain:   rule '%s' skipped - it refuses the name"), *Rule.Context);
             continue;
         }
         if(Redirects.ContainsByPredicate([&Rule, &Explanation](const FRedirect& Redirect) { return Redirect.Context == Rule.Context && Redirect.Prefix == Explanation.Prefix; }))
         {
+            UE_LOG(LogTheQuartermaster, Verbose, TEXT("Placement.Explain:   rule '%s' skipped - a redirect sends prefix '%s' elsewhere"), *Rule.Context, *Explanation.Prefix);
             continue;
         }
 
         FMatch Match;
-        if(RuleAccountsForFolder(Rule, Segments, Explanation.Prefix, Explanation.Kind, Match.Facts, Match.LiteralSegments))
+        const bool bAccounts = RuleAccountsForFolder(Rule, Segments, Explanation.Prefix, Explanation.Kind, Match.Facts, Match.LiteralSegments);
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("Placement.Explain:   rule '%s' template '%s' accounts=%d literal segments=%d"), *Rule.Context, *Rule.Folder, bAccounts ? 1 : 0, Match.LiteralSegments);
+        if(bAccounts)
         {
             Match.Rule = &Rule;
             Matches.Add(MoveTemp(Match));
@@ -771,6 +819,7 @@ FThePathExplanation FThePlacementResolver::Explain(const FString& PackagePath) c
 
     if(Matches.IsEmpty())
     {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("Placement.Explain: '%s' unmatched"), *PackagePath);
         Explanation.Outcome = ETheExplanationOutcome::Unmatched;
         Explanation.Error = FString::Printf(TEXT("'%s' satisfies no rule in this taxonomy"), *PackagePath);
         for(const FRule& Rule : Rules)
@@ -809,6 +858,7 @@ FThePathExplanation FThePlacementResolver::Explain(const FString& PackagePath) c
         }
         Explanation.CandidateContexts.Sort();
         Explanation.Error = FString::Printf(TEXT("'%s' satisfies %d rules equally well: %s"), *PackagePath, Explanation.CandidateContexts.Num(), *FString::Join(Explanation.CandidateContexts, TEXT(", ")));
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("Placement.Explain: ambiguous - %d of %d match(es) tie at %d literal segment(s)"), Best.Num(), Matches.Num(), MostLiteral);
         return Explanation;
     }
 
@@ -816,5 +866,6 @@ FThePathExplanation FThePlacementResolver::Explain(const FString& PackagePath) c
     Explanation.Context = Best[0]->Rule->Context;
     Explanation.FolderTemplate = Best[0]->Rule->Folder;
     Explanation.Facts = Best[0]->Facts;
+    UE_LOG(LogTheQuartermaster, Verbose, TEXT("Placement.Explain: matched context '%s' template '%s' with %d fact(s), out of %d match(es)"), *Explanation.Context, *Explanation.FolderTemplate, Explanation.Facts.Num(), Matches.Num());
     return Explanation;
 }

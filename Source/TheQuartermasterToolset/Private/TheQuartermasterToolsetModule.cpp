@@ -2,8 +2,16 @@
 
 #include "TheQuartermasterToolset.h"
 
+#include "HAL/IConsoleManager.h"
 #include "Modules/ModuleManager.h"
 #include "ToolsetRegistry/UToolsetRegistry.h"
+
+DEFINE_LOG_CATEGORY(LogTheQuartermasterToolset);
+
+static TAutoConsoleVariable<bool> CVarTheQuartermasterToolsetLog(TEXT("the.quartermastertoolset.log"),
+    false,
+    TEXT("Log the numbers of every TheQuartermaster toolset tool call: arguments, counts and results. Off by default; 1 raises LogTheQuartermasterToolset to Verbose."),
+    FConsoleVariableDelegate::CreateLambda([](IConsoleVariable* Var) { LogTheQuartermasterToolset.SetVerbosity(Var->GetBool() ? ELogVerbosity::Verbose : ELogVerbosity::Log); }));
 
 /**
  * The whole module: register the toolset class, unregister it on shutdown.
@@ -14,15 +22,9 @@
 class FTheQuartermasterToolsetModule : public IModuleInterface
 {
 public:
-    virtual void StartupModule() override
-    {
-        UToolsetRegistry::RegisterToolsetClass(UTheQuartermasterToolset::StaticClass());
-    }
+    virtual void StartupModule() override { UToolsetRegistry::RegisterToolsetClass(UTheQuartermasterToolset::StaticClass()); }
 
-    virtual void ShutdownModule() override
-    {
-        UToolsetRegistry::UnregisterToolsetClass(UTheQuartermasterToolset::StaticClass());
-    }
+    virtual void ShutdownModule() override { UToolsetRegistry::UnregisterToolsetClass(UTheQuartermasterToolset::StaticClass()); }
 };
 
 IMPLEMENT_MODULE(FTheQuartermasterToolsetModule, TheQuartermasterToolset)

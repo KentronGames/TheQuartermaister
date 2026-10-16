@@ -3,8 +3,14 @@
 #include "TheQuartermasterModule.h"
 
 #include "Asset/TheFolderQuarantine.h"
+#include "HAL/IConsoleManager.h"
 
 DEFINE_LOG_CATEGORY(LogTheQuartermaster);
+
+static TAutoConsoleVariable<bool> CVarTheQuartermasterLog(TEXT("the.quartermaster.log"),
+    false,
+    TEXT("Log the numbers of every TheQuartermaster operation: quarantine moves, restores and deletes, redirects, referencer scans, placement and lint decisions. Off by default; 1 raises LogTheQuartermaster to Verbose."),
+    FConsoleVariableDelegate::CreateLambda([](IConsoleVariable* Var) { LogTheQuartermaster.SetVerbosity(Var->GetBool() ? ELogVerbosity::Verbose : ELogVerbosity::Log); }));
 
 #define LOCTEXT_NAMESPACE "FTheQuartermasterModule"
 
