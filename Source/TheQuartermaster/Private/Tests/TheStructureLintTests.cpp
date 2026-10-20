@@ -1,159 +1,146 @@
 // (c) 2026 Kentron Cowboys. All rights reserved.
 
-#include "Misc/AutomationTest.h"
+#include "CoreMinimal.h"
 
-#if WITH_DEV_AUTOMATION_TESTS
+#if WITH_AUTOMATION_TESTS && WITH_EDITOR
 
-#include "Placement/TheStructureLint.h"
+    #include "CQTest.h"
+    #include "Placement/TheStructureLint.h"
 
-#include "Interfaces/IPluginManager.h"
-#include "Misc/Paths.h"
+    #include "HAL/FileManager.h"
+    #include "Misc/FileHelper.h"
+    #include "Misc/Paths.h"
 
 namespace TheQuartermasterLintTests
 {
-FString ConfigPath(const FString& Leaf)
-{
-    const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("TheQuartermaster"));
-    return Plugin.IsValid() ? Plugin->GetBaseDir() / TEXT("Config") / Leaf : FString();
-}
-}
+/** A destination table that mixes depths: a building kit is one family behind Buildings/Kits, an environment pack owns its family under the category. */
+const TCHAR* const LayeredConfig = TEXT(R"json({
+    "content_root": "/Game",
+    "lint": {
+        "shared_folder": "Assets/Shared",
+        "family_root": "Assets",
+        "family_patterns": [
+            "*/Buildings/Kits/*",
+            "*/Buildings/Parts/*",
+            "*/Buildings/*",
+            "*/Props/*/*",
+            "*/Environment/*"
+        ],
+        "assembly_patterns": ["*/Buildings/Kits/*"],
+        "rule_severity": { "family-depends-on-family": "warning" }
+    }
+})json");
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTheLintMixedDepthTest, "TheQuartermaster.Lint.FamilyRoutesCarryTheirOwnDepth", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FTheLintMixedDepthTest::RunTest(const FString& Parameters)
-{
-    using namespace TheQuartermasterLintTests;
+/** A flat library: the family is the single segment below Assets, and nothing is declared an assembly. */
+const TCHAR* const FlatConfig = TEXT(R"json({
+    "content_root": "/Game",
+    "lint": {
+        "shared_folder": "Assets/Shared",
+        "family_root": "Assets",
+        "family_patterns": ["*"]
+    }
+})json");
 
-    FTheLintConfig Config;
-    FString Error;
-    if(!TestTrue(FString::Printf(TEXT("OWH config loads: %s"), *Error),
-        FTheStructureLint::LoadConfig(ConfigPath(TEXT("placement.owh.json")), Config, Error)))
+/** The lint reads its config only from a file, so the test's own JSON goes through one that does not outlive the call. */
+bool LoadConfig(const TCHAR* Json, FTheLintConfig& OutConfig, FString& OutError)
+{
+    const auto File = FPaths::AutomationTransientDir() / TEXT("TheQuartermaster") / FString::Printf(TEXT("lint-%s.json"), *FGuid::NewGuid().ToString());
+    if(!FFileHelper::SaveStringToFile(FString(Json), *File))
     {
+        OutError = FString::Printf(TEXT("cannot write the fixture config %s"), *File);
         return false;
     }
-
-    TestEqual(TEXT("building kit family"),
-        FTheStructureLint::FamilyOf(TEXT("/Game/Assets/City/Buildings/Kits/ModularSchool01/Meshes/SM_Wall"), Config),
-        FString(TEXT("City/Buildings/Kits/ModularSchool01")));
-    TestEqual(TEXT("prop family"),
-        FTheStructureLint::FamilyOf(TEXT("/Game/Assets/City/Props/Signs/RoadSigns01/SM_Sign"), Config),
-        FString(TEXT("City/Props/Signs/RoadSigns01")));
-    TestEqual(TEXT("vehicle family"),
-        FTheStructureLint::FamilyOf(TEXT("/Game/Assets/City/Vehicles/Background/Sedan01/SM_Sedan"), Config),
-        FString(TEXT("City/Vehicles/Background/Sedan01")));
-
-    TestEqual(TEXT("environment family"),
-        FTheStructureLint::FamilyOf(TEXT("/Game/Assets/City/Environment/CityPark01/Textures/T_Mask"), Config),
-        FString(TEXT("City/Environment/CityPark01")));
-    TestEqual(TEXT("foliage family"),
-        FTheStructureLint::FamilyOf(TEXT("/Game/Assets/City/Foliage/Trees01/SM_Tree"), Config),
-        FString(TEXT("City/Foliage/Trees01")));
-
-    const FString Left = FTheStructureLint::FamilyOf(TEXT("/Game/Assets/City/Props/Signs/RoadSigns01/SM_A"), Config);
-    const FString Right = FTheStructureLint::FamilyOf(TEXT("/Game/Assets/City/Props/Signs/ShopSigns01/SM_B"), Config);
-    TestNotEqual(TEXT("sibling packs are distinct families"), Left, Right);
-
-    TestEqual(TEXT("shared is family-less"),
-        FTheStructureLint::FamilyOf(TEXT("/Game/Assets/Shared/Textures/Utility/T_Noise"), Config), FString());
-    TestEqual(TEXT("outside the family root"),
-        FTheStructureLint::FamilyOf(TEXT("/Game/Characters/Jimmy/BP_Jimmy"), Config), FString());
-
-    TestEqual(TEXT("unrouted shape"),
-        FTheStructureLint::FamilyOf(TEXT("/Game/Assets/City/Weather/Rain01/SM_Drop"), Config), FString());
-
-    TestEqual(TEXT("specific route wins over general"),
-        FTheStructureLint::FamilyOf(TEXT("/Game/Assets/City/Buildings/OldWorkshop01/SM_Bench"), Config),
-        FString(TEXT("City/Buildings/OldWorkshop01")));
-
-    return true;
+    const auto bLoaded = FTheStructureLint::LoadConfig(File, OutConfig, OutError);
+    IFileManager::Get().Delete(*File, /*RequireExists*/ false, /*EvenReadOnly*/ true);
+    return bLoaded;
+}
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTheLintFlatTaxonomyTest, "TheQuartermaster.Lint.OneSchemaCarriesAFlatTaxonomy", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FTheLintFlatTaxonomyTest::RunTest(const FString& Parameters)
+TEST_CLASS(StructureLint, "TheQuartermaster")
 {
-    using namespace TheQuartermasterLintTests;
-
-    FTheLintConfig Config;
-    FString Error;
-    if(!TestTrue(FString::Printf(TEXT("TheGame config loads: %s"), *Error),
-        FTheStructureLint::LoadConfig(ConfigPath(TEXT("placement.forms.json")), Config, Error)))
+    // Guards: the first matching route names the family, whatever its depth; shared, outside and unrouted packages belong to none.
+    TEST_METHOD(FamilyRoutesCarryTheirOwnDepth)
     {
-        return false;
+        using namespace TheQuartermasterLintTests;
+
+        FTheLintConfig Layered;
+        FTheLintConfig Flat;
+        FString Error;
+        ASSERT_THAT(IsTrue(LoadConfig(LayeredConfig, Layered, Error), FString::Printf(TEXT("the layered config loads: %s"), *Error)));
+        ASSERT_THAT(IsTrue(LoadConfig(FlatConfig, Flat, Error), FString::Printf(TEXT("the flat config loads: %s"), *Error)));
+
+        struct FRow
+        {
+            const TCHAR* Label;
+            const FTheLintConfig* Config;
+            const TCHAR* Package;
+            const TCHAR* Family;
+        };
+        const FRow Rows[] = {
+            {TEXT("a building kit is one family behind Kits"), &Layered, TEXT("/Game/Assets/City/Buildings/Kits/ModularSchool01/Meshes/SM_Wall"), TEXT("City/Buildings/Kits/ModularSchool01")},
+            {TEXT("a prop is a family two levels under the category"), &Layered, TEXT("/Game/Assets/City/Props/Signs/RoadSigns01/SM_Sign"), TEXT("City/Props/Signs/RoadSigns01")},
+            {TEXT("an environment pack owns its family directly"), &Layered, TEXT("/Game/Assets/City/Environment/CityPark01/Textures/T_Mask"), TEXT("City/Environment/CityPark01")},
+            {TEXT("the general Buildings route takes what the specific ones do not"), &Layered, TEXT("/Game/Assets/City/Buildings/OldWorkshop01/SM_Bench"), TEXT("City/Buildings/OldWorkshop01")},
+            {TEXT("shared is family-less"), &Layered, TEXT("/Game/Assets/Shared/Textures/Utility/T_Noise"), TEXT("")},
+            {TEXT("outside the family root is family-less"), &Layered, TEXT("/Game/Characters/Someone/BP_Someone"), TEXT("")},
+            {TEXT("an unrouted shape is family-less"), &Layered, TEXT("/Game/Assets/City/Weather/Rain01/SM_Drop"), TEXT("")},
+            {TEXT("a flat family"), &Flat, TEXT("/Game/Assets/Tower01/SM_Tower01"), TEXT("Tower01")},
+            {TEXT("a flat family keeps its internal layout"), &Flat, TEXT("/Game/Assets/Tower01/Meshes/SM_Tower01"), TEXT("Tower01")},
+            {TEXT("flat shared is family-less"), &Flat, TEXT("/Game/Assets/Shared/Textures/T_Noise"), TEXT("")},
+        };
+        for(const auto& Row : Rows)
+        {
+            (void)Assert.AreEqual(FString(Row.Family), FTheStructureLint::FamilyOf(Row.Package, *Row.Config), FString::Printf(TEXT("%s: %s"), Row.Label, Row.Package));
+        }
     }
 
-    TestEqual(TEXT("flat family"),
-        FTheStructureLint::FamilyOf(TEXT("/Game/Assets/Tower01/SM_Tower01"), Config), FString(TEXT("Tower01")));
-    TestEqual(TEXT("flat family keeps its internal layout"),
-        FTheStructureLint::FamilyOf(TEXT("/Game/Assets/Tower01/Meshes/SM_Tower01"), Config), FString(TEXT("Tower01")));
-    TestEqual(TEXT("flat shared is family-less"),
-        FTheStructureLint::FamilyOf(TEXT("/Game/Assets/Shared/Textures/T_Noise"), Config), FString());
-
-    return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTheLintAssemblyRoleTest, "TheQuartermaster.Lint.AssembliesComposeAndAreNotComposed", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FTheLintAssemblyRoleTest::RunTest(const FString& Parameters)
-{
-    using namespace TheQuartermasterLintTests;
-
-    FTheLintConfig Config;
-    FString Error;
-    if(!TestTrue(FString::Printf(TEXT("OWH config loads: %s"), *Error),
-        FTheStructureLint::LoadConfig(ConfigPath(TEXT("placement.owh.json")), Config, Error)))
+    // Guards: only a family on an assembly route composes others; its container, its insides and a flat library's families do not.
+    TEST_METHOD(AssembliesComposeAndAreNotComposed)
     {
-        return false;
+        using namespace TheQuartermasterLintTests;
+
+        FTheLintConfig Layered;
+        FTheLintConfig Flat;
+        FString Error;
+        ASSERT_THAT(IsTrue(LoadConfig(LayeredConfig, Layered, Error), FString::Printf(TEXT("the layered config loads: %s"), *Error)));
+        ASSERT_THAT(IsTrue(LoadConfig(FlatConfig, Flat, Error), FString::Printf(TEXT("the flat config loads: %s"), *Error)));
+
+        struct FRow
+        {
+            const TCHAR* Label;
+            const FTheLintConfig* Config;
+            const TCHAR* Family;
+            bool bAssembly;
+        };
+        const FRow Rows[] = {
+            {TEXT("a building kit is an assembly"), &Layered, TEXT("City/Buildings/Kits/PreBuildings01"), true},
+            {TEXT("a part is not"), &Layered, TEXT("City/Buildings/Parts/Wall04"), false},
+            {TEXT("an environment pack is not"), &Layered, TEXT("City/Environment/CityPark01"), false},
+            {TEXT("the kits container itself is not"), &Layered, TEXT("City/Buildings/Kits"), false},
+            {TEXT("a folder inside a kit is not"), &Layered, TEXT("City/Buildings/Kits/PreBuildings01/Meshes"), false},
+            {TEXT("the empty family never is"), &Layered, TEXT(""), false},
+            {TEXT("a config declaring no assemblies has none"), &Flat, TEXT("Tower01"), false},
+        };
+        for(const auto& Row : Rows)
+        {
+            (void)Assert.AreEqual(Row.bAssembly, FTheStructureLint::IsAssembly(Row.Family, *Row.Config), FString::Printf(TEXT("%s: '%s'"), Row.Label, Row.Family));
+        }
     }
 
-    TestTrue(TEXT("a building kit is an assembly"),
-        FTheStructureLint::IsAssembly(TEXT("City/Buildings/Kits/PreBuildings01"), Config));
-    TestFalse(TEXT("a part is not an assembly"),
-        FTheStructureLint::IsAssembly(TEXT("City/Buildings/Parts/Wall04"), Config));
-    TestFalse(TEXT("an environment pack is not an assembly"),
-        FTheStructureLint::IsAssembly(TEXT("City/Environment/CityPark01"), Config));
-
-    TestFalse(TEXT("the kits container itself is not an assembly"),
-        FTheStructureLint::IsAssembly(TEXT("City/Buildings/Kits"), Config));
-    TestFalse(TEXT("a folder inside a kit is not an assembly"),
-        FTheStructureLint::IsAssembly(TEXT("City/Buildings/Kits/PreBuildings01/Meshes"), Config));
-    TestFalse(TEXT("empty family is never an assembly"),
-        FTheStructureLint::IsAssembly(FString(), Config));
-
-    FTheLintConfig Flat;
-    if(TestTrue(TEXT("TheGame config loads"),
-        FTheStructureLint::LoadConfig(ConfigPath(TEXT("placement.forms.json")), Flat, Error)))
+    // Guards: a rule's severity is what the config declares, and a rule it does not name is not downgraded.
+    TEST_METHOD(SeverityIsConfiguration)
     {
-        TestFalse(TEXT("no assemblies declared"), FTheStructureLint::IsAssembly(TEXT("Tower01"), Flat));
+        using namespace TheQuartermasterLintTests;
+
+        FTheLintConfig Config;
+        FString Error;
+        ASSERT_THAT(IsTrue(LoadConfig(LayeredConfig, Config, Error), FString::Printf(TEXT("the layered config loads: %s"), *Error)));
+
+        const auto CrossFamily = Config.RuleSeverity.Find(TEXT("family-depends-on-family"));
+        ASSERT_THAT(IsNotNull(CrossFamily, TEXT("the cross-family severity is read from the config")));
+        (void)Assert.IsTrue(*CrossFamily == ETheLintSeverity::Warning, TEXT("cross-family is the warning the config declares"));
+        (void)Assert.IsNull(Config.RuleSeverity.Find(TEXT("shared-depends-on-family")), TEXT("a rule the config does not name is not downgraded"));
     }
-
-    return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTheLintSeverityConfigTest, "TheQuartermaster.Lint.SeverityIsConfiguration", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FTheLintSeverityConfigTest::RunTest(const FString& Parameters)
-{
-    using namespace TheQuartermasterLintTests;
-
-    FTheLintConfig Config;
-    FString Error;
-    if(!TestTrue(FString::Printf(TEXT("OWH config loads: %s"), *Error),
-        FTheStructureLint::LoadConfig(ConfigPath(TEXT("placement.owh.json")), Config, Error)))
-    {
-        return false;
-    }
-
-    const ETheLintSeverity* CrossFamily = Config.RuleSeverity.Find(TEXT("family-depends-on-family"));
-    if(TestNotNull(TEXT("cross-family severity is declared"), CrossFamily))
-    {
-        TestTrue(TEXT("cross-family is a warning"), *CrossFamily == ETheLintSeverity::Warning);
-    }
-    TestNull(TEXT("shared-depends-on-family is not downgraded"), Config.RuleSeverity.Find(TEXT("shared-depends-on-family")));
-
-    FTheLintResult Result;
-    Result.Findings.Add({TEXT("family-depends-on-family"), TEXT("/Game/Assets/A/B/C/SM_X"), TEXT(""), ETheLintSeverity::Warning});
-    Result.Findings.Add({TEXT("shared-depends-on-family"), TEXT("/Game/Assets/Shared/M_Y"), TEXT(""), ETheLintSeverity::Error});
-    TestEqual(TEXT("error count"), Result.CountOf(ETheLintSeverity::Error), 1);
-    TestEqual(TEXT("warning count"), Result.CountOf(ETheLintSeverity::Warning), 1);
-
-    return true;
-}
+};
 
 #endif

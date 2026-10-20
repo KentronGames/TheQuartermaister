@@ -1,9 +1,10 @@
 // (c) 2026 Kentron Cowboys. All rights reserved.
 
-#include "Misc/AutomationTest.h"
+#include "CoreMinimal.h"
 
-#if WITH_DEV_AUTOMATION_TESTS
+#if WITH_AUTOMATION_TESTS && WITH_EDITOR
 
+    #include "CQTest.h"
     #include "Tests/TheQuartermasterTestFixtures.h"
 
     #include "Asset/TheFolderQuarantine.h"
@@ -14,305 +15,233 @@
     #include "Misc/Paths.h"
     #include "Misc/ScopeExit.h"
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTheQuartermasterQuarantineRoundTripTest, "TheQuartermaster.Quarantine.MoveVerifyRestore", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FTheQuartermasterQuarantineRoundTripTest::RunTest(const FString& Parameters)
+TEST_CLASS(FolderQuarantine, "TheQuartermaster")
 {
-    using namespace TheQuartermasterTests;
-
-    const FString Pack = FString(TestRoot) / TEXT("RoundTripPack");
-    const FString Parked = FTheFolderQuarantine::QuarantineRoot() / TEXT("RoundTripPack");
-    const FString AssetPath = Pack / TEXT("DA_RoundTrip");
-
-    RemoveFolderFromDisk(Parked);
-    RemoveFolderFromDisk(Pack);
-    ON_SCOPE_EXIT
+    // Guards: a quarantined pack leaves Content with a record of its origin, and a restore puts it back exactly once.
+    TEST_METHOD(MoveVerifyRestore)
     {
+        using namespace TheQuartermasterTests;
+
+        const auto Pack = FString(TestRoot) / TEXT("RoundTripPack");
+        const auto Parked = FTheFolderQuarantine::QuarantineRoot() / TEXT("RoundTripPack");
+        const auto AssetPath = Pack / TEXT("DA_RoundTrip");
+
         RemoveFolderFromDisk(Parked);
-        ReleaseTestRoot();
-    };
-
-    if(!TestTrue(TEXT("fixture asset saved"), MakeSavedAsset(AssetPath)))
-    {
-        return false;
-    }
-
-    FString Report;
-    FString Error;
-    bool bNeedsRestart = false;
-
-    TestFalse(TEXT("VerifyQuarantined refuses before the move"), FTheFolderQuarantine::VerifyQuarantined(Pack, Report, Error));
-
-    if(!TestTrue(FString::Printf(TEXT("MoveToQuarantine succeeded: %s"), *Error), FTheFolderQuarantine::MoveToQuarantine(Pack, Report, bNeedsRestart, Error)))
-    {
-        return false;
-    }
-    TestTrue(FString::Printf(TEXT("VerifyQuarantined passes: %s"), *Error), FTheFolderQuarantine::VerifyQuarantined(Pack, Report, Error));
-    TestFalse(TEXT("the source folder is gone from disk"), IFileManager::Get().DirectoryExists(*DiskPathOf(Pack)));
-    TestTrue(TEXT("the origin marker records where the pack came from"), IFileManager::Get().FileExists(*(DiskPathOf(Parked) / TEXT(".origin"))));
-
-    if(!TestTrue(FString::Printf(TEXT("RestoreFromQuarantine succeeded: %s"), *Error), FTheFolderQuarantine::RestoreFromQuarantine(Parked, Report, bNeedsRestart, Error)))
-    {
-        return false;
-    }
-    TestTrue(FString::Printf(TEXT("VerifyRestoredFromQuarantine passes: %s"), *Error), FTheFolderQuarantine::VerifyRestoredFromQuarantine(Pack, Report, Error));
-    TestTrue(TEXT("the asset is back at its original package path"), FPackageName::DoesPackageExist(AssetPath));
-
-    TestFalse(TEXT("a second restore has nothing to read, so it refuses instead of moving something else"), FTheFolderQuarantine::RestoreFromQuarantine(Parked, Report, bNeedsRestart, Error));
-    return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTheQuartermasterQuarantineDeleteTest, "TheQuartermaster.Quarantine.DeleteRemovesTheFolder", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FTheQuartermasterQuarantineDeleteTest::RunTest(const FString& Parameters)
-{
-    using namespace TheQuartermasterTests;
-
-    const FString Pack = FString(TestRoot) / TEXT("DeletePack");
-    const FString Parked = FTheFolderQuarantine::QuarantineRoot() / TEXT("DeletePack");
-
-    RemoveFolderFromDisk(Parked);
-    RemoveFolderFromDisk(Pack);
-    ON_SCOPE_EXIT
-    {
-        RemoveFolderFromDisk(Parked);
-        ReleaseTestRoot();
-    };
-
-    if(!TestTrue(TEXT("fixture asset saved"), MakeSavedAsset(Pack / TEXT("DA_Delete"))))
-    {
-        return false;
-    }
-
-    FString Report;
-    FString Error;
-    bool bNeedsRestart = false;
-
-    if(!TestTrue(FString::Printf(TEXT("MoveToQuarantine succeeded: %s"), *Error), FTheFolderQuarantine::MoveToQuarantine(Pack, Report, bNeedsRestart, Error)))
-    {
-        return false;
-    }
-    TestFalse(TEXT("VerifyQuarantineDeleted refuses while the folder is still there"), FTheFolderQuarantine::VerifyQuarantineDeleted(Parked, Report, Error));
-
-    TestTrue(FString::Printf(TEXT("DeleteFromQuarantine succeeded: %s"), *Error), FTheFolderQuarantine::DeleteFromQuarantine(Parked, /*bForce*/ false, Report, Error));
-    TestTrue(FString::Printf(TEXT("VerifyQuarantineDeleted passes: %s"), *Error), FTheFolderQuarantine::VerifyQuarantineDeleted(Parked, Report, Error));
-    return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTheQuartermasterQuarantineReferencedDeleteTest, "TheQuartermaster.Quarantine.DeleteRefusesWhileSomethingOutsideStillPointsAtIt", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FTheQuartermasterQuarantineReferencedDeleteTest::RunTest(const FString& Parameters)
-{
-    using namespace TheQuartermasterTests;
-
-    const FString Pack = FString(TestRoot) / TEXT("ReferencedPack");
-    const FString Parked = FTheFolderQuarantine::QuarantineRoot() / TEXT("ReferencedPack");
-    const FString UserPackage = FString(TestRoot) / TEXT("Harvested") / TEXT("MI_Harvested");
-
-    RemoveFolderFromDisk(Parked);
-    RemoveFolderFromDisk(Pack);
-    RemoveFolderFromDisk(FString(TestRoot) / TEXT("Harvested"));
-    ON_SCOPE_EXIT
-    {
-        RemoveFolderFromDisk(Parked);
-        RemoveFolderFromDisk(FString(TestRoot) / TEXT("Harvested"));
-        ReleaseTestRoot();
-    };
-
-    if(!TestTrue(TEXT("fixture material saved"), MakeSavedMaterial(Pack / TEXT("M_Referenced")) != nullptr))
-    {
-        return false;
-    }
-
-    FString Report;
-    FString Error;
-    bool bNeedsRestart = false;
-    if(!TestTrue(FString::Printf(TEXT("MoveToQuarantine succeeded: %s"), *Error), FTheFolderQuarantine::MoveToQuarantine(Pack, Report, bNeedsRestart, Error)))
-    {
-        return false;
-    }
-
-    UMaterialInterface* const ParkedMaterial = LoadObject<UMaterialInterface>(nullptr, *(Parked / TEXT("M_Referenced.M_Referenced")));
-    if(!TestTrue(TEXT("the parked material loads from its quarantine path"), ParkedMaterial != nullptr))
-    {
-        return false;
-    }
-
-    if(!TestTrue(TEXT("a package outside the quarantine now references the parked one"), MakeSavedReferencingAsset(UserPackage, ParkedMaterial)))
-    {
-        return false;
-    }
-
-    const TArray<FString> Referencers = FTheFolderQuarantine::ExternalReferencersOf(Parked);
-    TestTrue(TEXT("the referencer is seen"), Referencers.Contains(UserPackage));
-
-    TestFalse(TEXT("DeleteFromQuarantine refuses while something outside still points at the folder"), FTheFolderQuarantine::DeleteFromQuarantine(Parked, /*bForce*/ false, Report, Error));
-    TestTrue(TEXT("the refusal names the referencer"), Error.Contains(UserPackage));
-
-    TestTrue(FString::Printf(TEXT("bForce deletes it anyway: %s"), *Error), FTheFolderQuarantine::DeleteFromQuarantine(Parked, /*bForce*/ true, Report, Error));
-    TestTrue(FString::Printf(TEXT("VerifyQuarantineDeleted passes: %s"), *Error), FTheFolderQuarantine::VerifyQuarantineDeleted(Parked, Report, Error));
-    return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTheQuartermasterQuarantineAbsenceTest, "TheQuartermaster.Quarantine.RefusesToActOnWhatIsNotThere", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FTheQuartermasterQuarantineAbsenceTest::RunTest(const FString& Parameters)
-{
-    using namespace TheQuartermasterTests;
-
-    const FString Missing = FTheFolderQuarantine::QuarantineRoot() / TEXT("__NoSuchPackEverExisted");
-    RemoveFolderFromDisk(Missing);
-
-    FString Report;
-    FString Error;
-
-    TestFalse(TEXT("DeleteFromQuarantine refuses a folder that is not on disk, instead of reading a mistyped path as a completed removal"), FTheFolderQuarantine::DeleteFromQuarantine(Missing, /*bForce*/ false, Report, Error));
-    TestTrue(TEXT("the refusal says the folder is not there"), Error.Contains(TEXT("does not exist")));
-
-    TestFalse(TEXT("PlanDeleteFromQuarantine refuses it too"), FTheFolderQuarantine::PlanDeleteFromQuarantine(Missing, Report, Error));
-    TestFalse(TEXT("PlanMoveToQuarantine refuses a source that is not on disk"), FTheFolderQuarantine::PlanMoveToQuarantine(FString(TestRoot) / TEXT("__NoSuchSource"), Report, Error));
-
-    return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTheQuartermasterQuarantinePlanTest, "TheQuartermaster.Quarantine.PlanPromisesWhatTheMoveDelivers", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FTheQuartermasterQuarantinePlanTest::RunTest(const FString& Parameters)
-{
-    using namespace TheQuartermasterTests;
-
-    const FString Pack = FString(TestRoot) / TEXT("PlanPack");
-    const FString Parked = FTheFolderQuarantine::QuarantineRoot() / TEXT("PlanPack");
-
-    RemoveFolderFromDisk(Parked);
-    RemoveFolderFromDisk(Pack);
-    ON_SCOPE_EXIT
-    {
-        RemoveFolderFromDisk(Parked);
-        ReleaseTestRoot();
-    };
-
-    if(!TestTrue(TEXT("fixture asset saved"), MakeSavedAsset(Pack / TEXT("DA_Plan"))))
-    {
-        return false;
-    }
-
-    FString Plan;
-    FString Report;
-    FString Error;
-    bool bNeedsRestart = false;
-
-    if(!TestTrue(FString::Printf(TEXT("PlanMoveToQuarantine answered: %s"), *Error), FTheFolderQuarantine::PlanMoveToQuarantine(Pack, Plan, Error)))
-    {
-        return false;
-    }
-    TestTrue(TEXT("the plan names the destination"), Plan.Contains(Parked));
-    TestTrue(TEXT("the plan wrote nothing: the pack is still where it was"), IFileManager::Get().DirectoryExists(*DiskPathOf(Pack)));
-
-    TestTrue(FString::Printf(TEXT("the move the plan promised lands: %s"), *Error), FTheFolderQuarantine::MoveToQuarantine(Pack, Report, bNeedsRestart, Error));
-    TestTrue(TEXT("a plan for the delete reads the parked folder"), FTheFolderQuarantine::PlanDeleteFromQuarantine(Parked, Plan, Error));
-    TestTrue(TEXT("the delete plan wrote nothing either"), IFileManager::Get().DirectoryExists(*DiskPathOf(Parked)));
-
-    TestTrue(FString::Printf(TEXT("DeleteFromQuarantine succeeded: %s"), *Error), FTheFolderQuarantine::DeleteFromQuarantine(Parked, /*bForce*/ false, Report, Error));
-    return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTheQuartermasterQuarantineGuardTest, "TheQuartermaster.Quarantine.RefusesOutsideTheRoot", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FTheQuartermasterQuarantineGuardTest::RunTest(const FString& Parameters)
-{
-    FString Report;
-    FString Error;
-    bool bNeedsRestart = false;
-
-    const FString Root = FTheFolderQuarantine::QuarantineRoot();
-
-    TestFalse(TEXT("deleting the quarantine root itself is refused by name: it would take every parked pack with it, and there is nothing to analyse at that point"), FTheFolderQuarantine::DeleteFromQuarantine(Root, /*bForce*/ false, Report, Error));
-    TestTrue(TEXT("the refusal names the root"), Error.Contains(Root));
-
-    TestFalse(TEXT("deleting a path outside the root is refused"), FTheFolderQuarantine::DeleteFromQuarantine(TEXT("/Game/SomethingElse"), /*bForce*/ false, Report, Error));
-
-    // A prefix test alone lets these through: on disk `..` climbs out and `//` collapses onto the
-    // root, so the first would delete a live Content folder and the second every parked pack.
-    const FString Escapes[] = {
-        Root / TEXT("../SomethingElse"),
-        Root / TEXT("Pack/../../SomethingElse"),
-        Root + TEXT("//"),
-        Root + TEXT("//Pack"),
-        Root / TEXT("./Pack"),
-        Root / TEXT("Pack/.."),
-        Root + TEXT("/..\\SomethingElse"),
-    };
-    for(const FString& Escape : Escapes)
-    {
-        Error.Reset();
-        TestFalse(FString::Printf(TEXT("deleting '%s' is refused"), *Escape), FTheFolderQuarantine::DeleteFromQuarantine(Escape, /*bForce*/ false, Report, Error));
-        TestTrue(FString::Printf(TEXT("the refusal for '%s' says why"), *Escape), Error.StartsWith(TEXT("refused")));
-        TestFalse(FString::Printf(TEXT("restoring '%s' is refused"), *Escape), FTheFolderQuarantine::RestoreFromQuarantine(Escape, Report, bNeedsRestart, Error));
-    }
-    TestFalse(TEXT("restoring a path outside the root is refused"), FTheFolderQuarantine::RestoreFromQuarantine(TEXT("/Game/SomethingElse"), Report, bNeedsRestart, Error));
-    TestFalse(TEXT("quarantining a non-/Game path is refused"), FTheFolderQuarantine::MoveToQuarantine(TEXT("/Engine/Whatever"), Report, bNeedsRestart, Error));
-    TestFalse(TEXT("quarantining something already in quarantine is refused"), FTheFolderQuarantine::MoveToQuarantine(Root / TEXT("Anything"), Report, bNeedsRestart, Error));
-    return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTheQuartermasterQuarantineSourceGuardTest, "TheQuartermaster.Quarantine.RefusesASourceThatContainsTheRoot", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FTheQuartermasterQuarantineSourceGuardTest::RunTest(const FString& Parameters)
-{
-    FString Report;
-    FString Error;
-    const FString Root = FTheFolderQuarantine::QuarantineRoot();
-
-    // Each of these resolves to Content (or to a folder holding the root) on disk; the move went into
-    // itself and the source delete erased the whole project. Only the Plan is called: it runs the same
-    // guard as the move, and a regression must not be able to reach the disk from a test.
-    const FString Sources[] = {
-        TEXT("/Game//"),
-        TEXT("/Game/."),
-        TEXT("/Game/./"),
-        TEXT("/Game/Pack/.."),
-        TEXT("/Game/Pack/../Other"),
-        TEXT("/Game//Pack"),
-        FPaths::GetPath(Root),
-        Root + TEXT("Old"),
-    };
-    for(const FString& Source : Sources)
-    {
-        Error.Reset();
-        const bool bPlanned = FTheFolderQuarantine::PlanMoveToQuarantine(Source, Report, Error);
-        if(Source == Root + TEXT("Old"))
+        RemoveFolderFromDisk(Pack);
+        ON_SCOPE_EXIT
         {
-            TestFalse(FString::Printf(TEXT("'%s' is not read as inside the root - the refusal is not 'already in quarantine'"), *Source), Error.Contains(TEXT("already in quarantine")));
-            continue;
-        }
-        TestFalse(FString::Printf(TEXT("quarantining '%s' is refused"), *Source), bPlanned);
-        // The path guard must be what refuses: the later "already exists in quarantine" check only fires
-        // while the root exists on disk, and the erasure happened exactly when it did not.
-        TestTrue(FString::Printf(TEXT("'%s' is refused by the path guard, not by an incidental disk check: %s"), *Source, *Error), Error.StartsWith(TEXT("refused")) || Error.StartsWith(TEXT("only /Game/")));
-    }
-    return true;
-}
+            RemoveFolderFromDisk(Parked);
+            ReleaseTestRoot();
+        };
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTheQuartermasterSettingsRootTest, "TheQuartermaster.Settings.FallsBackOnUnusableRoot", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FTheQuartermasterSettingsRootTest::RunTest(const FString& Parameters)
-{
-    UTheQuartermasterSettings* Settings = GetMutableDefault<UTheQuartermasterSettings>();
-    if(!TestNotNull(TEXT("settings CDO"), Settings))
+        ASSERT_THAT(IsTrue(MakeSavedAsset(AssetPath), TEXT("fixture asset saved")));
+
+        FString Report;
+        FString Error;
+        auto bNeedsRestart = false;
+
+        (void)Assert.IsFalse(FTheFolderQuarantine::VerifyQuarantined(Pack, Report, Error), TEXT("VerifyQuarantined refuses before the move"));
+
+        ASSERT_THAT(IsTrue(FTheFolderQuarantine::MoveToQuarantine(Pack, Report, bNeedsRestart, Error), FString::Printf(TEXT("MoveToQuarantine succeeded: %s"), *Error)));
+        (void)Assert.IsTrue(FTheFolderQuarantine::VerifyQuarantined(Pack, Report, Error), FString::Printf(TEXT("VerifyQuarantined passes: %s"), *Error));
+        (void)Assert.IsFalse(IFileManager::Get().DirectoryExists(*DiskPathOf(Pack)), TEXT("the source folder is gone from disk"));
+        (void)Assert.IsTrue(IFileManager::Get().FileExists(*(DiskPathOf(Parked) / TEXT(".origin"))), TEXT("the origin marker records where the pack came from"));
+
+        ASSERT_THAT(IsTrue(FTheFolderQuarantine::RestoreFromQuarantine(Parked, Report, bNeedsRestart, Error), FString::Printf(TEXT("RestoreFromQuarantine succeeded: %s"), *Error)));
+        (void)Assert.IsTrue(FTheFolderQuarantine::VerifyRestoredFromQuarantine(Pack, Report, Error), FString::Printf(TEXT("VerifyRestoredFromQuarantine passes: %s"), *Error));
+        (void)Assert.IsTrue(FPackageName::DoesPackageExist(AssetPath), TEXT("the asset is back at its original package path"));
+
+        (void)Assert.IsFalse(FTheFolderQuarantine::RestoreFromQuarantine(Parked, Report, bNeedsRestart, Error), TEXT("a second restore has nothing to read, so it refuses instead of moving something else"));
+    }
+
+    // Guards: a plan writes nothing and promises what the move and the delete then do; the delete is verified gone.
+    TEST_METHOD(PlanPromisesWhatTheMoveAndDeleteDeliver)
     {
-        return false;
+        using namespace TheQuartermasterTests;
+
+        const auto Pack = FString(TestRoot) / TEXT("PlanPack");
+        const auto Parked = FTheFolderQuarantine::QuarantineRoot() / TEXT("PlanPack");
+
+        RemoveFolderFromDisk(Parked);
+        RemoveFolderFromDisk(Pack);
+        ON_SCOPE_EXIT
+        {
+            RemoveFolderFromDisk(Parked);
+            ReleaseTestRoot();
+        };
+
+        ASSERT_THAT(IsTrue(MakeSavedAsset(Pack / TEXT("DA_Plan")), TEXT("fixture asset saved")));
+
+        FString Plan;
+        FString Report;
+        FString Error;
+        auto bNeedsRestart = false;
+
+        ASSERT_THAT(IsTrue(FTheFolderQuarantine::PlanMoveToQuarantine(Pack, Plan, Error), FString::Printf(TEXT("PlanMoveToQuarantine answered: %s"), *Error)));
+        (void)Assert.IsTrue(Plan.Contains(Parked), TEXT("the plan names the destination"));
+        (void)Assert.IsTrue(IFileManager::Get().DirectoryExists(*DiskPathOf(Pack)), TEXT("the plan wrote nothing: the pack is still where it was"));
+
+        ASSERT_THAT(IsTrue(FTheFolderQuarantine::MoveToQuarantine(Pack, Report, bNeedsRestart, Error), FString::Printf(TEXT("the move the plan promised lands: %s"), *Error)));
+        (void)Assert.IsTrue(FTheFolderQuarantine::PlanDeleteFromQuarantine(Parked, Plan, Error), FString::Printf(TEXT("a plan for the delete reads the parked folder: %s"), *Error));
+        (void)Assert.IsTrue(IFileManager::Get().DirectoryExists(*DiskPathOf(Parked)), TEXT("the delete plan wrote nothing either"));
+        (void)Assert.IsFalse(FTheFolderQuarantine::VerifyQuarantineDeleted(Parked, Report, Error), TEXT("VerifyQuarantineDeleted refuses while the folder is still there"));
+
+        ASSERT_THAT(IsTrue(FTheFolderQuarantine::DeleteFromQuarantine(Parked, /*bForce*/ false, Report, Error), FString::Printf(TEXT("DeleteFromQuarantine succeeded: %s"), *Error)));
+        (void)Assert.IsTrue(FTheFolderQuarantine::VerifyQuarantineDeleted(Parked, Report, Error), FString::Printf(TEXT("VerifyQuarantineDeleted passes: %s"), *Error));
     }
-    const FString Original = Settings->QuarantineRoot;
 
-    Settings->QuarantineRoot = TEXT("/Game/Parked/");
-    TestEqual(TEXT("a trailing slash is stripped"), UTheQuartermasterSettings::ResolvedQuarantineRoot(), FString(TEXT("/Game/Parked")));
+    // Guards: a parked folder something outside still references is not deleted unless forced, and the refusal names the referencer.
+    TEST_METHOD(DeleteRefusesWhileSomethingOutsideStillPointsAtIt)
+    {
+        using namespace TheQuartermasterTests;
 
-    Settings->QuarantineRoot = TEXT("/Game");
-    TestEqual(TEXT("/Game itself falls back to the default rather than failing - a bad setting must not strand folders already parked under the default root"),
-        UTheQuartermasterSettings::ResolvedQuarantineRoot(),
-        FString(UTheQuartermasterSettings::DefaultQuarantineRoot()));
+        const auto Pack = FString(TestRoot) / TEXT("ReferencedPack");
+        const auto Parked = FTheFolderQuarantine::QuarantineRoot() / TEXT("ReferencedPack");
+        const auto UserFolder = FString(TestRoot) / TEXT("Harvested");
+        const auto UserPackage = UserFolder / TEXT("MI_Harvested");
 
-    Settings->QuarantineRoot = TEXT("D:/NotAPackagePath");
-    TestEqual(TEXT("a non-/Game path falls back to the default"), UTheQuartermasterSettings::ResolvedQuarantineRoot(), FString(UTheQuartermasterSettings::DefaultQuarantineRoot()));
+        RemoveFolderFromDisk(Parked);
+        RemoveFolderFromDisk(Pack);
+        RemoveFolderFromDisk(UserFolder);
+        ON_SCOPE_EXIT
+        {
+            RemoveFolderFromDisk(Parked);
+            RemoveFolderFromDisk(UserFolder);
+            ReleaseTestRoot();
+        };
 
-    Settings->QuarantineRoot = FString();
-    TestEqual(TEXT("an empty root falls back to the default"), UTheQuartermasterSettings::ResolvedQuarantineRoot(), FString(UTheQuartermasterSettings::DefaultQuarantineRoot()));
+        ASSERT_THAT(IsNotNull(MakeSavedMaterial(Pack / TEXT("M_Referenced")), TEXT("fixture material saved")));
 
-    Settings->QuarantineRoot = Original;
-    return true;
-}
+        FString Report;
+        FString Error;
+        auto bNeedsRestart = false;
+        ASSERT_THAT(IsTrue(FTheFolderQuarantine::MoveToQuarantine(Pack, Report, bNeedsRestart, Error), FString::Printf(TEXT("MoveToQuarantine succeeded: %s"), *Error)));
+
+        auto* const ParkedMaterial = LoadObject<UMaterialInterface>(nullptr, *(Parked / TEXT("M_Referenced.M_Referenced")));
+        ASSERT_THAT(IsNotNull(ParkedMaterial, TEXT("the parked material loads from its quarantine path")));
+        ASSERT_THAT(IsTrue(MakeSavedReferencingAsset(UserPackage, ParkedMaterial), TEXT("a package outside the quarantine now references the parked one")));
+
+        (void)Assert.IsTrue(FTheFolderQuarantine::ExternalReferencersOf(Parked).Contains(UserPackage), TEXT("the referencer is seen"));
+
+        (void)Assert.IsFalse(FTheFolderQuarantine::DeleteFromQuarantine(Parked, /*bForce*/ false, Report, Error), TEXT("DeleteFromQuarantine refuses while something outside still points at the folder"));
+        (void)Assert.IsTrue(Error.Contains(UserPackage), FString::Printf(TEXT("the refusal names the referencer (%s)"), *Error));
+
+        (void)Assert.IsTrue(FTheFolderQuarantine::DeleteFromQuarantine(Parked, /*bForce*/ true, Report, Error), FString::Printf(TEXT("bForce deletes it anyway: %s"), *Error));
+        (void)Assert.IsTrue(FTheFolderQuarantine::VerifyQuarantineDeleted(Parked, Report, Error), FString::Printf(TEXT("VerifyQuarantineDeleted passes: %s"), *Error));
+    }
+
+    // Guards: a mistyped path is refused as absent, never read as a completed removal or a movable source.
+    TEST_METHOD(RefusesToActOnWhatIsNotThere)
+    {
+        using namespace TheQuartermasterTests;
+
+        const auto Missing = FTheFolderQuarantine::QuarantineRoot() / TEXT("__NoSuchPackEverExisted");
+        RemoveFolderFromDisk(Missing);
+
+        FString Report;
+        FString Error;
+
+        (void)Assert.IsFalse(FTheFolderQuarantine::DeleteFromQuarantine(Missing, /*bForce*/ false, Report, Error), TEXT("DeleteFromQuarantine refuses a folder that is not on disk"));
+        (void)Assert.IsTrue(Error.Contains(TEXT("does not exist")), FString::Printf(TEXT("the refusal says the folder is not there (%s)"), *Error));
+
+        (void)Assert.IsFalse(FTheFolderQuarantine::PlanDeleteFromQuarantine(Missing, Report, Error), TEXT("PlanDeleteFromQuarantine refuses it too"));
+        (void)Assert.IsFalse(FTheFolderQuarantine::PlanMoveToQuarantine(FString(TestRoot) / TEXT("__NoSuchSource"), Report, Error), TEXT("PlanMoveToQuarantine refuses a source that is not on disk"));
+    }
+
+    // Guards: delete and restore never reach outside the quarantine root - by name, by `..`, or by a doubled slash collapsing onto it.
+    TEST_METHOD(RefusesOutsideTheRoot)
+    {
+        FString Report;
+        FString Error;
+        auto bNeedsRestart = false;
+
+        const auto Root = FTheFolderQuarantine::QuarantineRoot();
+
+        (void)Assert.IsFalse(FTheFolderQuarantine::DeleteFromQuarantine(Root, /*bForce*/ false, Report, Error), TEXT("deleting the quarantine root itself is refused: it would take every parked pack with it"));
+        (void)Assert.IsTrue(Error.Contains(Root), FString::Printf(TEXT("the refusal names the root (%s)"), *Error));
+
+        (void)Assert.IsFalse(FTheFolderQuarantine::DeleteFromQuarantine(TEXT("/Game/SomethingElse"), /*bForce*/ false, Report, Error), TEXT("deleting a path outside the root is refused"));
+
+        // A prefix test alone lets these through: on disk `..` climbs out and `//` collapses onto the
+        // root, so the first would delete a live Content folder and the second every parked pack.
+        const FString Escapes[] = {
+            Root / TEXT("../SomethingElse"),
+            Root / TEXT("Pack/../../SomethingElse"),
+            Root + TEXT("//"),
+            Root + TEXT("//Pack"),
+            Root / TEXT("./Pack"),
+            Root / TEXT("Pack/.."),
+            Root + TEXT("/..\\SomethingElse"),
+        };
+        for(const auto& Escape : Escapes)
+        {
+            Error.Reset();
+            (void)Assert.IsFalse(FTheFolderQuarantine::DeleteFromQuarantine(Escape, /*bForce*/ false, Report, Error), FString::Printf(TEXT("deleting '%s' is refused"), *Escape));
+            (void)Assert.IsTrue(Error.StartsWith(TEXT("refused")), FString::Printf(TEXT("the refusal for '%s' says why (%s)"), *Escape, *Error));
+            (void)Assert.IsFalse(FTheFolderQuarantine::RestoreFromQuarantine(Escape, Report, bNeedsRestart, Error), FString::Printf(TEXT("restoring '%s' is refused"), *Escape));
+        }
+        (void)Assert.IsFalse(FTheFolderQuarantine::RestoreFromQuarantine(TEXT("/Game/SomethingElse"), Report, bNeedsRestart, Error), TEXT("restoring a path outside the root is refused"));
+        (void)Assert.IsFalse(FTheFolderQuarantine::MoveToQuarantine(TEXT("/Engine/Whatever"), Report, bNeedsRestart, Error), TEXT("quarantining a non-/Game path is refused"));
+        (void)Assert.IsFalse(FTheFolderQuarantine::MoveToQuarantine(Root / TEXT("Anything"), Report, bNeedsRestart, Error), TEXT("quarantining something already in quarantine is refused"));
+    }
+
+    // Guards: the bug where a source resolving onto Content, or holding the root, moved into itself and erased the project.
+    TEST_METHOD(RefusesASourceThatContainsTheRoot)
+    {
+        FString Report;
+        FString Error;
+        const auto Root = FTheFolderQuarantine::QuarantineRoot();
+
+        // Only the Plan is called: it runs the same guard as the move, and a regression must not be able
+        // to reach the disk from a test.
+        const FString Sources[] = {
+            TEXT("/Game//"),
+            TEXT("/Game/."),
+            TEXT("/Game/./"),
+            TEXT("/Game/Pack/.."),
+            TEXT("/Game/Pack/../Other"),
+            TEXT("/Game//Pack"),
+            FPaths::GetPath(Root),
+        };
+        for(const auto& Source : Sources)
+        {
+            Error.Reset();
+            (void)Assert.IsFalse(FTheFolderQuarantine::PlanMoveToQuarantine(Source, Report, Error), FString::Printf(TEXT("quarantining '%s' is refused"), *Source));
+            // The path guard must be what refuses: the later "already exists in quarantine" check only fires
+            // while the root exists on disk, and the erasure happened exactly when it did not.
+            (void)Assert.IsTrue(Error.StartsWith(TEXT("refused")) || Error.StartsWith(TEXT("only /Game/")), FString::Printf(TEXT("'%s' is refused by the path guard, not by an incidental disk check: %s"), *Source, *Error));
+        }
+
+        const auto Neighbour = Root + TEXT("Old");
+        Error.Reset();
+        (void)FTheFolderQuarantine::PlanMoveToQuarantine(Neighbour, Report, Error);
+        (void)Assert.IsFalse(Error.Contains(TEXT("already in quarantine")), FString::Printf(TEXT("'%s' is not read as inside the root (%s)"), *Neighbour, *Error));
+    }
+
+    // Guards: an unusable quarantine root setting falls back to the default rather than stranding packs parked under it.
+    TEST_METHOD(UnusableRootFallsBackToTheDefault)
+    {
+        auto* const Settings = GetMutableDefault<UTheQuartermasterSettings>();
+        ASSERT_THAT(IsNotNull(Settings, TEXT("the settings default object")));
+        const auto Original = Settings->QuarantineRoot;
+        ON_SCOPE_EXIT
+        {
+            Settings->QuarantineRoot = Original;
+        };
+
+        const FString Default = UTheQuartermasterSettings::DefaultQuarantineRoot();
+        const TPair<const TCHAR*, FString> Rows[] = {
+            {TEXT("/Game/Parked/"), FString(TEXT("/Game/Parked"))},
+            {TEXT("/Game"), Default},
+            {TEXT("D:/NotAPackagePath"), Default},
+            {TEXT(""), Default},
+        };
+        for(const auto& Row : Rows)
+        {
+            Settings->QuarantineRoot = Row.Key;
+            (void)Assert.AreEqual(Row.Value, UTheQuartermasterSettings::ResolvedQuarantineRoot(), FString::Printf(TEXT("the setting '%s' resolves to '%s'"), Row.Key, *Row.Value));
+        }
+    }
+};
 
 #endif

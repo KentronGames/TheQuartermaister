@@ -2,9 +2,9 @@
 
 #pragma once
 
-#include "Misc/AutomationTest.h"
+#include "CoreMinimal.h"
 
-#if WITH_DEV_AUTOMATION_TESTS
+#if WITH_AUTOMATION_TESTS && WITH_EDITOR
 
     #include "Asset/TheFolderQuarantine.h"
 

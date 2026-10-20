@@ -28,5 +28,10 @@ public class TheQuartermaster : ModuleRules
             "Projects",
             "UnrealEd"
         });
+
+        if(Target.bBuildEditor)
+        {
+            PrivateDependencyModuleNames.Add("CQTest");
+        }
     }
 }
