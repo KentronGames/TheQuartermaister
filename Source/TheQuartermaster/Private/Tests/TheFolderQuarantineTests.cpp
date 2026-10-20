@@ -12,6 +12,7 @@
     #include "HAL/FileManager.h"
     #include "Misc/PackageName.h"
     #include "Misc/Paths.h"
+    #include "Misc/ScopeExit.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTheQuartermasterQuarantineRoundTripTest, "TheQuartermaster.Quarantine.MoveVerifyRestore", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FTheQuartermasterQuarantineRoundTripTest::RunTest(const FString& Parameters)
@@ -24,6 +25,11 @@ bool FTheQuartermasterQuarantineRoundTripTest::RunTest(const FString& Parameters
 
     RemoveFolderFromDisk(Parked);
     RemoveFolderFromDisk(Pack);
+    ON_SCOPE_EXIT
+    {
+        RemoveFolderFromDisk(Parked);
+        ReleaseTestRoot();
+    };
 
     if(!TestTrue(TEXT("fixture asset saved"), MakeSavedAsset(AssetPath)))
     {
@@ -52,9 +58,6 @@ bool FTheQuartermasterQuarantineRoundTripTest::RunTest(const FString& Parameters
     TestTrue(TEXT("the asset is back at its original package path"), FPackageName::DoesPackageExist(AssetPath));
 
     TestFalse(TEXT("a second restore has nothing to read, so it refuses instead of moving something else"), FTheFolderQuarantine::RestoreFromQuarantine(Parked, Report, bNeedsRestart, Error));
-
-    RemoveFolderFromDisk(Parked);
-    ReleaseTestRoot();
     return true;
 }
 
@@ -68,6 +71,11 @@ bool FTheQuartermasterQuarantineDeleteTest::RunTest(const FString& Parameters)
 
     RemoveFolderFromDisk(Parked);
     RemoveFolderFromDisk(Pack);
+    ON_SCOPE_EXIT
+    {
+        RemoveFolderFromDisk(Parked);
+        ReleaseTestRoot();
+    };
 
     if(!TestTrue(TEXT("fixture asset saved"), MakeSavedAsset(Pack / TEXT("DA_Delete"))))
     {
@@ -86,8 +94,6 @@ bool FTheQuartermasterQuarantineDeleteTest::RunTest(const FString& Parameters)
 
     TestTrue(FString::Printf(TEXT("DeleteFromQuarantine succeeded: %s"), *Error), FTheFolderQuarantine::DeleteFromQuarantine(Parked, /*bForce*/ false, Report, Error));
     TestTrue(FString::Printf(TEXT("VerifyQuarantineDeleted passes: %s"), *Error), FTheFolderQuarantine::VerifyQuarantineDeleted(Parked, Report, Error));
-
-    ReleaseTestRoot();
     return true;
 }
 
@@ -103,6 +109,12 @@ bool FTheQuartermasterQuarantineReferencedDeleteTest::RunTest(const FString& Par
     RemoveFolderFromDisk(Parked);
     RemoveFolderFromDisk(Pack);
     RemoveFolderFromDisk(FString(TestRoot) / TEXT("Harvested"));
+    ON_SCOPE_EXIT
+    {
+        RemoveFolderFromDisk(Parked);
+        RemoveFolderFromDisk(FString(TestRoot) / TEXT("Harvested"));
+        ReleaseTestRoot();
+    };
 
     if(!TestTrue(TEXT("fixture material saved"), MakeSavedMaterial(Pack / TEXT("M_Referenced")) != nullptr))
     {
@@ -120,13 +132,11 @@ bool FTheQuartermasterQuarantineReferencedDeleteTest::RunTest(const FString& Par
     UMaterialInterface* const ParkedMaterial = LoadObject<UMaterialInterface>(nullptr, *(Parked / TEXT("M_Referenced.M_Referenced")));
     if(!TestTrue(TEXT("the parked material loads from its quarantine path"), ParkedMaterial != nullptr))
     {
-        ReleaseTestRoot();
         return false;
     }
 
     if(!TestTrue(TEXT("a package outside the quarantine now references the parked one"), MakeSavedReferencingAsset(UserPackage, ParkedMaterial)))
     {
-        ReleaseTestRoot();
         return false;
     }
 
@@ -138,9 +148,6 @@ bool FTheQuartermasterQuarantineReferencedDeleteTest::RunTest(const FString& Par
 
     TestTrue(FString::Printf(TEXT("bForce deletes it anyway: %s"), *Error), FTheFolderQuarantine::DeleteFromQuarantine(Parked, /*bForce*/ true, Report, Error));
     TestTrue(FString::Printf(TEXT("VerifyQuarantineDeleted passes: %s"), *Error), FTheFolderQuarantine::VerifyQuarantineDeleted(Parked, Report, Error));
-
-    RemoveFolderFromDisk(FString(TestRoot) / TEXT("Harvested"));
-    ReleaseTestRoot();
     return true;
 }
 
@@ -174,6 +181,11 @@ bool FTheQuartermasterQuarantinePlanTest::RunTest(const FString& Parameters)
 
     RemoveFolderFromDisk(Parked);
     RemoveFolderFromDisk(Pack);
+    ON_SCOPE_EXIT
+    {
+        RemoveFolderFromDisk(Parked);
+        ReleaseTestRoot();
+    };
 
     if(!TestTrue(TEXT("fixture asset saved"), MakeSavedAsset(Pack / TEXT("DA_Plan"))))
     {
@@ -187,7 +199,6 @@ bool FTheQuartermasterQuarantinePlanTest::RunTest(const FString& Parameters)
 
     if(!TestTrue(FString::Printf(TEXT("PlanMoveToQuarantine answered: %s"), *Error), FTheFolderQuarantine::PlanMoveToQuarantine(Pack, Plan, Error)))
     {
-        ReleaseTestRoot();
         return false;
     }
     TestTrue(TEXT("the plan names the destination"), Plan.Contains(Parked));
@@ -198,8 +209,6 @@ bool FTheQuartermasterQuarantinePlanTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("the delete plan wrote nothing either"), IFileManager::Get().DirectoryExists(*DiskPathOf(Parked)));
 
     TestTrue(FString::Printf(TEXT("DeleteFromQuarantine succeeded: %s"), *Error), FTheFolderQuarantine::DeleteFromQuarantine(Parked, /*bForce*/ false, Report, Error));
-
-    ReleaseTestRoot();
     return true;
 }
 
