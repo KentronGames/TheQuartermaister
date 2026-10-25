@@ -261,6 +261,19 @@ TEST_CLASS(PlacementResolver, "TheQuartermaster")
         const auto Tie = Ambiguous.Explain(TEXT("/Game/Assets/Tower01/SM_Tower01"));
         (void)Assert.AreEqual(ETheExplanationOutcome::Ambiguous, Tie.Outcome, TEXT("a tie is reported as ambiguous"));
         (void)Assert.AreEqual(2, Tie.CandidateContexts.Num(), TEXT("and both contexts are named"));
+
+        FThePlacementResolver SameFolder;
+        const auto TwoNames = TEXT(R"json({
+            "content_root": "/Game",
+            "unprefixed_contexts": ["map-test", "map-qa"],
+            "rules": [
+                { "context": "map-test", "folder": "Maps/QA" },
+                { "context": "map-qa",   "folder": "Maps/QA" }
+            ]
+        })json");
+        ASSERT_THAT(IsTrue(SameFolder.LoadConfigFromString(TwoNames, Error), FString::Printf(TEXT("the two-name config loads: %s"), *Error)));
+        const auto OneAddress = SameFolder.Explain(TEXT("/Game/Maps/QA/CrossroadsDungeon"));
+        (void)Assert.AreEqual(ETheExplanationOutcome::Matched, OneAddress.Outcome, FString::Printf(TEXT("rules tying on one folder name one address (%s)"), *OneAddress.Error));
     }
 
     // Guards: a top-level exception folder is outside the taxonomy, compared as the content browser compares, and nothing else is.

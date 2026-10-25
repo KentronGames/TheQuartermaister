@@ -849,6 +849,15 @@ FThePathExplanation FThePlacementResolver::Explain(const FString& PackagePath) c
         }
     }
 
+    // Rules that tie on one and the same folder template name one address (two names for one folder, such as test and
+    // QA maps kept together), so the path is accounted for; the first rule in the table's order answers for it.
+    const bool bOneFolder = Best.Num() > 1 && !Best.ContainsByPredicate([&Best](const FMatch* Match) { return !Match->Rule->Folder.Equals(Best[0]->Rule->Folder, ESearchCase::IgnoreCase); });
+    if(bOneFolder)
+    {
+        UE_LOG(LogTheQuartermaster, Verbose, TEXT("Placement.Explain: %d rule(s) tie on one folder '%s' - taken as '%s'"), Best.Num(), *Best[0]->Rule->Folder, *Best[0]->Rule->Context);
+        Best.SetNum(1);
+    }
+
     if(Best.Num() > 1)
     {
         Explanation.Outcome = ETheExplanationOutcome::Ambiguous;
