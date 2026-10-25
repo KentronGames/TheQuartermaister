@@ -158,7 +158,7 @@ bool FTheStructureLint::LoadConfig(const FString& FilePath, FTheLintConfig& OutC
     const TSharedPtr<FJsonObject>* Severities = nullptr;
     if((*Lint)->TryGetObjectField(TEXT("rule_severity"), Severities))
     {
-        for(const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*Severities)->Values)
+        for(const TPair<FString, TSharedPtr<FJsonValue>> Pair : (*Severities)->Values)
         {
             const FString Value = Pair.Value.IsValid() ? Pair.Value->AsString() : FString();
             if(Value.Equals(TEXT("warning"), ESearchCase::IgnoreCase))

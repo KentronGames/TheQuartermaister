@@ -39,7 +39,7 @@ void ReadStringMap(const TSharedPtr<FJsonObject>& Source, const FString& Field, 
     {
         return;
     }
-    for(const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*Object)->Values)
+    for(const TPair<FString, TSharedPtr<FJsonValue>> Pair : (*Object)->Values)
     {
         FString Value;
         if(Pair.Value->TryGetString(Value))
@@ -206,7 +206,7 @@ bool FThePlacementResolver::ReadFacts(const TSharedPtr<FJsonObject>& Object, FRu
     {
         return true;
     }
-    for(const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*Facts)->Values)
+    for(const TPair<FString, TSharedPtr<FJsonValue>> Pair : (*Facts)->Values)
     {
         const TSharedPtr<FJsonObject>* Body = nullptr;
         if(!Pair.Value->TryGetObject(Body))
